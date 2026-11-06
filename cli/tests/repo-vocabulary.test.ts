@@ -18,7 +18,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
@@ -71,6 +71,26 @@ const EXEMPT: readonly string[] = ['cli/tests/skill-provenance.test.ts']
 
 interface Hit { file: string; line: number; token: string }
 
+/** Pure scan, with the installed catalog supplied separately from repository content. */
+function scanVocabulary(text: string, file: string, installed: ReadonlySet<string>): Hit[] {
+  const hits: Hit[] = []
+  text.split('\n').forEach((line, i) => {
+    for (const { token, why } of FORBIDDEN) {
+      if (why === 'a skill not installed here' && installed.has(token)) continue
+      if (line.toLowerCase().includes(token.toLowerCase())) hits.push({ file, line: i + 1, token })
+    }
+  })
+  return hits
+}
+
+/** Only tracked, present skill entry points establish availability; unrelated names do not. */
+function installedSkillNames(): Set<string> {
+  return new Set(execFileSync('git', ['-C', repoRoot, 'ls-files', '.dsh/skills'], { encoding: 'utf8' })
+    .split('\n')
+    .filter((file) => /^\.dsh\/skills\/[^/]+\/SKILL\.md$/.test(file) && existsSync(join(repoRoot, file)))
+    .map((file) => file.split('/')[2]!))
+}
+
 /** Tracked text files. Binary content is skipped by NUL sniffing, and the count is asserted so an
  *  empty file set can never report a pass. */
 function trackedTextFiles(): string[] {
@@ -87,13 +107,10 @@ function trackedTextFiles(): string[] {
 
 function scan(files: string[]): Hit[] {
   const hits: Hit[] = []
+  const installed = installedSkillNames()
   for (const f of files) {
     const text = readFileSync(join(repoRoot, f), 'utf8')
-    text.split('\n').forEach((line, i) => {
-      for (const { token } of FORBIDDEN) {
-        if (line.toLowerCase().includes(token.toLowerCase())) hits.push({ file: f, line: i + 1, token })
-      }
-    })
+    hits.push(...scanVocabulary(text, f, installed))
   }
   return hits
 }
@@ -128,5 +145,16 @@ describe('repository vocabulary — this project is SAIP, not another project (#
     const hits = scan(files)
     const report = hits.slice(0, 40).map((h) => `${h.file}:${h.line}  ${h.token}`).join('\n')
     expect(hits, `${String(hits.length)} violation(s), first 40:\n${report}`).toEqual([])
+  })
+
+  it('recognizes an installed skill without allowing unavailable skills or foreign products (#203)', () => {
+    const skill = ['systematic-', 'debugging'].join('')
+    expect(installedSkillNames().has(skill), 'availability comes from an actual tracked entry point').toBe(true)
+    const fixture = [skill, ['dsh', '-chapters'].join('')].join('\n')
+    expect(scanVocabulary(fixture, 'fixture.md', new Set())).toHaveLength(2)
+    expect(scanVocabulary(fixture, 'fixture.md', new Set([skill])).map((hit) => hit.token))
+      .toEqual([['dsh', '-chapters'].join('')])
+    expect(scanVocabulary(fixture, 'fixture.md', new Set(FORBIDDEN.map((entry) => entry.token))).map((hit) => hit.token))
+      .toEqual([['dsh', '-chapters'].join('')])
   })
 })
