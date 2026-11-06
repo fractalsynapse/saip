@@ -2,6 +2,7 @@
 /examples/
 /context/
 /.dsh-*
+/.dsh/logs/
 /.codegraph/
 
 # Environment / secrets
