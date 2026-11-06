@@ -20,8 +20,7 @@
  *
  *   1. no loaded skill may name another project's toolchain (marker list below);
  *   2. every path a skill presents as a command argument must resolve — against the repo root OR
- *      the skill's own directory, because `render-graphs.js` legitimately means "in this
- *      directory";
+ *      the skill's own directory, because a relative helper can legitimately live there;
  *   3. every `pnpm`/`npm` script a skill runs must appear in some workspace manifest.
  *
  * Scope is each skill's `SKILL.md` — the file an agent actually loads (see `loadedSkillFiles`).
@@ -44,8 +43,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync, existsSync } from 'node:fs'
-import { dirname, join, posix } from 'node:path'
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { basename, dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -291,10 +290,17 @@ describe('skill provenance — a loaded skill must describe this repository (#18
     expect(found.some((x) => x.kind === 'unknown-script' && x.detail.includes('test:e2e:replay'))).toBe(true)
   })
 
-  it('does NOT fire on a legitimate relative script (regression: render-graphs.js)', () => {
-    // `node ./render-graphs.js` means "in this directory" and the file is committed there.
-    const text = '```bash\nnode ./render-graphs.js ../some-skill\n```\n'
-    expect(scanSkillText(text, '.dsh/skills/writing-skills/SKILL.md', scripts)).toEqual([])
+  it('resolves a skill-relative helper and rejects it after removal (#203)', () => {
+    const directory = mkdtempSync(join(repoRoot, '.dsh/skills/.path-check-'))
+    const helper = join(directory, 'helper.mjs')
+    const file = posix.join('.dsh/skills', basename(directory), 'SKILL.md')
+    const text = '```bash\nnode ./helper.mjs\n```\n'
+    try {
+      writeFileSync(helper, '// disposable resource fixture\n')
+      expect(scanSkillText(text, file, scripts)).toEqual([])
+      rmSync(helper)
+      expect(scanSkillText(text, file, scripts).map((item) => item.kind)).toEqual(['missing-path'])
+    } finally { rmSync(directory, { recursive: true, force: true }) }
   })
 
   it('rule 4 has a failing state: it rejects an obligation naming a skill that is not installed (#189)', () => {

@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- docs: adopt generic agent procedures while preserving SAIP directives (#203). Refresh the shared skills in the existing discovery location, retain local-model operational guidance and root architecture/security/testing/release policy, remove obsolete helpers and code examples, and check the assembled instruction package with the existing test runner.
+
 ## [0.7.0] - 2026-10-21
 
 ### Added
