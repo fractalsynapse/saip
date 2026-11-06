@@ -1,177 +1,55 @@
 ---
 name: local-llm
-description: Local vLLM model server (Qwen3-4B-AWQ) with dual inference/systemone endpoints, Docker Compose stack management, and test runner operations for the dsh-chapters dev platform.
-whenToUse: When working with the local LLM server, running or managing the Docker Compose stack (vllm, dsh-web, dsh-test), executing acceptance tests, configuring model endpoints, sending requests to the inference or decision models, or troubleshooting the containerized dev/test platform in dev/install/.
+description: Use when operating or diagnosing SAIP inference/training stacks, GPU profiles, engine configuration or adapter loading.
 ---
 
-# Local LLM & Dev/Test Platform
+# SAIP local model operations
 
-The `dev/install/` directory is a self-contained development and test platform for
-dsh-chapters: DSH Web UI, local vLLM model server, and CI test runner.
+Follow the [project instructions](../../../AGENTS.md), including infrastructure authority,
+secret handling and evidence requirements. Inspect the selected host and current state before
+starting/stopping services; diagnostics do not authorize changes to live stacks.
 
-## Two Model Endpoints — When to Use Each
+## Resolve the actual configuration
 
-The vLLM service serves [Qwen/Qwen3-4B-AWQ](https://huggingface.co/Qwen/Qwen3-4B-AWQ)
-under **two model names**. They share the same weights but serve different purposes.
-Choosing the right one matters for correct system behavior.
+SAIP owns separate inference and training Compose stacks. The CLI is the supported operator
+surface; use its documented awake, sleep, down and status behavior rather than guessing Compose
+operations. The gateway is the normal client surface so adapter routing and recording apply;
+the engine's direct endpoint is for scoped diagnosis. Verify actual ports and selected images
+in the stack files instead of copying defaults or checkpoint revisions into this skill.
 
-### `qwen3-4b-instruct` — Inference Endpoint
+The selected checkpoint, revision, quantization, profiles and adapter names come from
+[saip.yaml](../../../saip.yaml). Hardware-dependent engine knobs belong to the active service
+profile. Derive memory utilization from the profile's ceiling and measured total/free memory;
+do not commit a universal utilization constant. Profile resolution fails closed when no tier
+fits; do not raise a ceiling merely to suppress refusal or OOM symptoms.
 
-**Use when**: generating text, answering questions, writing code, having conversations,
-summarizing, translating, or any open-ended generation task.
+Render engine arguments before bringing inference up. The generated engine-argument environment
+file is local output, not committed configuration; regenerate it after relevant profile changes.
+The [inference stack](../../../inference/docker-compose.yml) records the generate-before-start
+contract, gateway-to-engine network address, cache volumes, health windows and runtime adapter
+support. The [engine image](../../../inference/vllm.Dockerfile) owns startup/parser arguments and
+its pinned base; remeasure affected profile claims before changing that pin. An incompatible
+adapter is a compile/load contract defect, not permission to bypass engine checks. Retain the
+stack's restrictions on DoRA and embedding/head modules.
 
-This is the **default model** for DSH agent sessions. It handles all user-facing
-interactions: chat completions, tool-call generation, plan drafting, chapter archiving
-decisions that require reasoning over content.
+## Diagnose within the user's scope
 
-```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3-4b-instruct",
-    "messages": [
-      {"role": "system", "content": "You are a helpful coding assistant."},
-      {"role": "user", "content": "Explain how async/await works in JavaScript."}
-    ],
-    "max_tokens": 512,
-    "temperature": 0.7
-  }'
-```
+Inspect resolved arguments and engine logs for startup failures; distinguish memory refusal,
+missing/generated configuration, cold loading and health-check timing. Do not assume every
+restart is OOM. Offline model loading requires an already populated cache; an empty cache is
+a missing prerequisite. Preserve cache and model/adapter data during troubleshooting.
+Use [systematic-debugging](../systematic-debugging/SKILL.md) and report the configuration and
+observed result rather than declaring a universal runtime limitation.
 
-### `qwen3-4b-systemone` — Decision Endpoint
+## Canonical references
 
-**Use when**: making binary/classification decisions, routing requests, evaluating
-conditions, structured output (JSON), approval/rejection gates, or any task where the
-output is a **discrete choice** rather than open-ended text.
+- [Local deployment](../../../docs/src/content/docs/guides/deploy-local.mdx): prerequisites,
+  operator commands, credentials and stack lifecycle.
+- [CLI reference](../../../docs/src/content/docs/guides/cli-reference.mdx): actual options/output.
+- [Hardware profiles](../../../docs/src/content/docs/reference/hardware-profiles.mdx): measured
+  tiers, memory constraints, checkpoint and adapter compatibility, version drift.
+- [Inference ownership](../../../inference/README.md) and
+  [training stack](../../../training/docker-compose.yml): service boundaries and configuration.
 
-This endpoint exists so the system can semantically separate "thinking" from "deciding."
-Use it for: should-we-compact checks, plan approval classification, enrichment priority
-scoring, transport failure triage, rule-match verdicts, or any yes/no/route-X-to-Y logic.
-
-```bash
-curl http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen3-4b-systemone",
-    "messages": [
-      {"role": "system", "content": "You are a decision engine. Respond ONLY with valid JSON: {\"decision\": \"approve|reject\", \"confidence\": 0.0-1.0, \"reason\": \"brief explanation\"}"},
-      {"role": "user", "content": "A session has used 85% of its context window. The current turn contains an active plan review. Should we trigger compaction now?"}
-    ],
-    "max_tokens": 128,
-    "temperature": 0.1
-  }'
-```
-
-### Key Differences in Usage
-
-| Aspect | `qwen3-4b-instruct` | `qwen3-4b-systemone` |
-|--------|---------------------|----------------------|
-| **Output type** | Open-ended text, code, conversation | Structured decisions, classifications |
-| **Temperature** | 0.7 (creative) | 0.1 (deterministic) |
-| **Max tokens** | 512–15000 (generous) | 64–256 (tight) |
-| **System prompt** | Conversational assistant | Decision schema + output format |
-| **DSH role** | Agent sessions, tool calls, plans | Compaction gates, routing, triage |
-| **When wrong** | Wastes tokens on verbose answers | Refuses creative tasks, too rigid |
-
-### Why Two Names for One Model?
-
-Semantic routing. The harness and plugins can route requests by **intent** rather than
-by model capability. This makes the architecture explicit: a future upgrade can swap
-the systemone endpoint to a specialized classifier without touching inference config.
-Today they share weights; tomorrow they might not. Code that uses the right name today
-is forward-compatible.
-
-## Connecting to the Server
-
-**Base URL**: `http://localhost:8080/v1` (from host) or `http://vllm:8080/v1` (inside containers)
-
-**Authentication**: None required. Set `LOCAL_API_KEY=sk-local` if your client requires a key header.
-
-**Verify it's running**:
-```bash
-curl http://localhost:8080/v1/models
-# Returns: {"data":[{"id":"qwen3-4b-instruct",...},{"id":"qwen3-4b-systemone",...}]}
-
-curl http://localhost:8080/health
-# Returns: 200 OK when ready
-```
-
-**OpenAI-compatible**: The server implements the full OpenAI Chat Completions API.
-Any client that speaks OpenAI format works — just point `base_url` at port 8080.
-
-## Docker Compose Stack
-
-Three services, started with `docker compose up -d` from `dev/install/`:
-
-| Service | Port | Purpose |
-|---------|------|---------|
-| `vllm` | 8080 | Qwen3-4B-AWQ model server (inference + systemone) |
-| `dsh-web` | 3080 | DSH Web UI with all plugins, pre-configured for vllm |
-| `dsh-test` | *(none)* | Node.js 22 + Playwright + Chromium test runner |
-
-Model weights are cached in the `dsh-vllm-cache` Docker volume — downloads once, boots
-instantly after that. No `.env` file needed; Compose reads variables from your shell.
-
-### Common Commands
-
-```bash
-# Start everything (export vars in shell first, no .env needed)
-cd dev/install && docker compose up -d
-
-# Run tests
-docker compose run --rm dsh-test npm run test:e2e:replay
-docker compose run --rm dsh-test npm run test:unit
-docker compose run --rm dsh-test npm run coverage:ci
-
-# Interactive test shell
-docker compose exec dsh-test bash
-
-# Stop / cleanup
-docker compose down              # stop services, keep volumes
-docker compose down -v           # also delete volumes (loses model cache)
-
-# Native install (no Docker)
-./dev/install/install.sh && dsh web
-```
-
-## Environment Variables
-
-All variables are read from the **parent shell**. No `.env` file required. See
-`.env.example` for the complete list with defaults. Key ones:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VLLM_MODEL_ID` | `Qwen/Qwen3-4B-AWQ` | HuggingFace model to serve |
-| `VLLM_SERVED_NAMES` | `qwen3-4b-instruct,qwen3-4b-systemone` | Model aliases |
-| `VLLM_MAX_MODEL_LEN` | `32768` | Context window size |
-| `VLLM_GPU_MEM` | `0.90` | GPU memory utilization |
-| `LLM_MODEL` | `qwen3-4b-instruct` | Default model for DSH sessions |
-| `SYSTEMONE_MODEL` | `qwen3-4b-systemone` | Decision model name |
-
-## Troubleshooting
-
-- **vllm exits with `invalid human_readable_int_or_auto value: '${MAX_MODEL_LEN}'`** — the image
-  predates the shell-form CMD fix (#19): exec-form `CMD ["...", "${VAR}", ...]` passes literal
-  `${VAR}` strings to vLLM because Docker does not interpolate inside JSON arrays. Rebuild with
-  `docker compose build --no-cache vllm`, then `docker compose up -d`. A stale `dsh-vllm` container
-  is reused by `up`; remove it with `docker rm -f dsh-vllm` if compose keeps the old one.
-- **`dependency vllm failed to start`** for `dsh-web`/`dsh-test` — always a symptom of the above or
-  a failed healthcheck; fix vllm first, the dependents follow once healthy.
-
-## Requirements
-
-- **Containerized**: Docker ≥ 24, Compose v2, NVIDIA GPU ≥ 4 GB VRAM, nvidia-container-toolkit
-- **Native**: Node.js ≥ 22, npm ≥ 10, Git, local model server at `localhost:8080`
-
-## Files Reference
-
-| File | Purpose |
-|------|---------|
-| `compose.yml` | Orchestration: vllm + dsh-web + dsh-test |
-| `vllm.Dockerfile` | vLLM image with pre-downloaded model |
-| `Dockerfile` | DSH Web UI image |
-| `test.Dockerfile` | Test runner (Node 22 + Playwright + Chromium) |
-| `docker-entrypoint.sh` | Generates settings, starts `dsh web` |
-| `install.sh` / `uninstall.sh` | Native install/remove scripts |
-| `.env.example` | Variable reference (not required at runtime) |
-| `profile-cordis.patch.yml` | Full Cordis config mirror |
+Use those maintained references for command/configuration examples. This skill preserves
+operational decisions without duplicating recipes or installing a model/runtime dependency.
