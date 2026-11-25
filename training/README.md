@@ -53,9 +53,9 @@ processed data formats it can consume from R2 and produces Axolotl datasets in i
 
 | Plugin | Consumes (from R2) | Produces |
 |--------|---------------------|----------|
-| `knowledge-embedding` | Processed documents | Completion-format text sequences |
-| `corrective-sft` | Feedback-weighted messages | SFT dataset with per-turn weights |
-| `weighted-kto` | Scalar reward records | KTO dataset with magnitude weights |
+| `knowledge_embedding` | Processed documents | Completion-format text sequences |
+| `corrective_sft` | Feedback-weighted messages | SFT dataset with per-turn weights |
+| `weighted_kto` | Scalar reward records | KTO dataset with magnitude weights |
 | *(extensible)* | *(declared types)* | *(strategy-specific Axolotl format)* |
 
 These are **Cordis plugins that register themselves at startup**. A training strategy plugin
