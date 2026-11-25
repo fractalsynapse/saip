@@ -13,15 +13,30 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const pkgRoot = join(import.meta.dirname, '..')
 const repoRoot = join(pkgRoot, '..')
 const entry = join(pkgRoot, 'dist', 'index.js')
 const noEnvFile = () => join(mkdtempSync(join(tmpdir(), 'saip-boot-')), 'missing.env')
+
+/**
+ * These tests execute the built artifact, so they can only prove anything if the artifact is
+ * newer than the source. Without this check an edit to `src/` that is not rebuilt leaves the suite
+ * asserting against stale bytes — which reads as "my change broke nothing" or, worse, as "my
+ * change broke this" when the failure is in code that no longer exists.
+ */
+function assertBuilt(): void {
+  if (!existsSync(entry)) throw new Error(`${entry} is missing — run pnpm -r build before pnpm -r test`)
+  const distMtime = statSync(entry).mtimeMs
+  const stale = ['src/index.ts', 'src/lib/backends.ts', 'src/plugins/data-documents.ts']
+    .map((f) => join(pkgRoot, f))
+    .filter((f) => existsSync(f) && statSync(f).mtimeMs > distMtime)
+  if (stale.length) throw new Error(`dist/ is older than ${stale.map((f) => basename(f)).join(', ')} — rebuild before testing the program`)
+}
 
 interface Run { code: number | null; stdout: string; stderr: string }
 
@@ -53,10 +68,7 @@ const baseEnv = (over: Record<string, string> = {}): Record<string, string> => (
   ...over,
 })
 
-beforeAll(() => {
-  // CI builds before testing; a missing artifact here is a broken run, not a reason to skip.
-  expect(existsSync(entry), `${entry} is missing — run pnpm -r build before pnpm -r test`).toBe(true)
-})
+beforeAll(() => { assertBuilt() })
 
 describe('saip inference: boot refuses or announces, never guesses', () => {
   it('exits non-zero naming SAIP_R2_BUCKET when no bucket is configured', async () => {

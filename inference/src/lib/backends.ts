@@ -18,7 +18,7 @@ import type { Message } from './config.js'
  * Re-exported so no import site in this package had to change.
  */
 export type { StorageProvider } from '@saip/shared/storage'
-export { MemoryStorage, storageProviderFor, MEMORY_WARNING } from '@saip/shared/storage'
+export { MemoryStorage, storageProviderFor } from '@saip/shared/storage'
 
 // ─── vLLM backend seam ────────────────────────────────────────
 

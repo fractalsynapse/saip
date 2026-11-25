@@ -54,10 +54,10 @@ export interface StorageFactoryOptions {
 /** The exact prefix the boot line must carry: tests and docs both quote it. */
 export const MEMORY_WARNING = 'storage: EXPLICIT MEMORY — data dies at restart'
 
-export const R2_BUCKET_VAR = 'SAIP_R2_BUCKET'
-export const R2_ENDPOINT_VAR = 'SAIP_R2_ENDPOINT'
-export const R2_ACCESS_VAR = 'SAIP_R2_ACCESS_KEY_ID'
-export const R2_SECRET_VAR = 'SAIP_R2_SECRET_ACCESS_KEY'
+const R2_BUCKET_VAR = 'SAIP_R2_BUCKET'
+const R2_ENDPOINT_VAR = 'SAIP_R2_ENDPOINT'
+const R2_ACCESS_VAR = 'SAIP_R2_ACCESS_KEY_ID'
+const R2_SECRET_VAR = 'SAIP_R2_SECRET_ACCESS_KEY'
 
 /** A configuration refusal, as distinct from a transport failure. */
 export class StorageSelectionError extends Error {
@@ -89,8 +89,6 @@ export class MemoryStorage implements StorageProvider {
   async delete(key: string): Promise<boolean> {
     return this.map.delete(key)
   }
-  /** Test/inspection aid: how many objects are held. */
-  size(): number { return this.map.size }
 }
 
 const truthy = (v: string | undefined): v is string => v !== undefined && v !== ''

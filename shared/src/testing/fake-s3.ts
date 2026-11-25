@@ -20,7 +20,7 @@ import { createHash, createHmac } from 'node:crypto'
 
 export const FAKE_SECRET_KEY = 'test-secret-access-key-value'
 export const FAKE_ACCESS_KEY = 'AKIATESTTESTTESTTEST1'
-export const PAGE_SIZE = 1000
+const PAGE_SIZE = 1000
 
 export interface FakeRequest {
   method: string
@@ -67,7 +67,7 @@ const canonicalQuery = (q: Record<string, string>): string =>
 const kdf = (key: Buffer | string, data: string): Buffer => createHmac('sha256', key).update(data).digest()
 
 /** Verify SigV4 for service `s3`. Null authenticates; a string is the reason it did not. */
-export function verifySigV4(req: FakeRequest): string | null {
+function verifySigV4(req: FakeRequest): string | null {
   const head = (req.headers.authorization ?? '').match(/^AWS4-HMAC-SHA256\s+(.*)$/)
   if (!head) return 'Authorization is not AWS4-HMAC-SHA256'
   const parts: Record<string, string> = {}
