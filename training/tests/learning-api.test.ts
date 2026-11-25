@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Context } from 'cordis'
 import { MemoryStorage } from '@saip/shared'
+import { seededStore } from './helpers/corpus.js'
 import { LearningApiService } from '../src/plugins/learning-api.js'
 import type { AdapterDefinition } from '@saip/shared'
 
@@ -16,7 +17,7 @@ const composite = (name: string): AdapterDefinition => ({
 async function boot() {
   const ctx = new Context() as any
   await ctx.plugin(LearningApiService as any, {
-    storage: new MemoryStorage(),
+    storage: await seededStore(),
     adapters: [leaf('northstar-project'), composite('agent')],
     registeredStrategies: ['corrective_sft'],
     defaultAdapterFor: () => 'northstar-project',

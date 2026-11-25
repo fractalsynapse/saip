@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Added
+- `scopes.ts`: `resolveScopes()` turning `data_scopes` into concrete member keys over the storage seam, with `selectKnowledgeObject()` as the single object-preference rule both gateways use (#196).
+- `LibraryDefinition`, `LibraryFilter`, `LibraryManifest`, `LibraryIndex` types for the `libraries:` config section (#196).
+
 - `LearningJobRecord`, `LearningJobStatus`, `LearningJobSummary` and `LearningJobIndex` in `types.ts` — the persisted job shape from design record §2.2, so training, the runner and `r2Sync` read and write one shape rather than three (#197a).
 
 - `storage.ts`: `StorageProvider`, `MemoryStorage`, `storageProviderFor()` and the selection policy (design record §1.3) — previously declared inside `@saip/inference`, where training could not use it without duplicating it (#198).

@@ -32,9 +32,12 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 ├── feedback/
 │   ├── _index.json
 │   └── <feedback-id>.json
-└── jobs/
+├── jobs/
+│   ├── _index.json
+│   └── <job-id>.json
+└── libraries/
     ├── _index.json
-    └── <job-id>.json
+    └── <name>/manifest.json
 ```
 
 ## adapters/
@@ -203,6 +206,31 @@ dataset/config/artifact references, and the append-only `history` of transitions
 **Single writer.** Only the training gateway mutates `jobs/`. Reads come from anywhere; the
 inference gateway never writes a job it did not create. This invariant is what makes the MVP's
 "index is not authoritative until list-authoritative reads land" safe rather than optimistic.
+
+## libraries/
+
+Saved selectors over `knowledge/`, declared in [`libraries:` config](/saip/reference/configuration/#libraries).
+A library is a **view**: the document objects themselves stay under `knowledge/`, and nothing is
+copied here — only which member keys the filter resolved to.
+
+### libraries/\<name\>/manifest.json
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Library identifier, matching `library:<name>` in `data_scopes`. |
+| `filter` | `object` | The filter that produced this membership, recorded so a reader can see *why* these are the members. |
+| `members` | `string[]` | Knowledge document keys (`knowledge/<id>/…`), sorted. |
+| `count` | `number` | `members.length`, so a resolver can spot an empty library without counting. |
+| `updated_at` | `string` (ISO 8601) | Last materialization. |
+
+### libraries/_index.json
+
+Registry of known libraries with their last materialization, so the Data API can detect a library
+that disappeared from config and prune its manifest.
+
+**Writer:** the inference gateway, on document upload/delete and on config load. **Reader:** the
+training gateway at job scope resolution. A scope that resolves to zero members fails the job
+before any configuration is materialized — training on nothing must not be reachable by typo.
 
 ## Index File Conventions
 

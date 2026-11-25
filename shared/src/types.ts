@@ -143,6 +143,43 @@ export interface LearningJobIndex {
   updated_at: string
 }
 
+/** Selector clause naming a subset of the knowledge corpus (saip.yaml `libraries:`). */
+export interface LibraryFilter {
+  tags?: string[]
+  source_type?: 'document' | 'repository' | 'dataset'
+  ids?: string[]
+}
+
+/** A named library as declared in config. Membership is derived, never authored. */
+export interface LibraryDefinition {
+  name: string
+  description?: string
+  filter?: LibraryFilter
+}
+
+/**
+ * Materialized library at `libraries/<name>/manifest.json` (#196, epic #64 B3).
+ *
+ * A manifest records the filter that produced the membership alongside the member keys, so a
+ * reader can see *why* a library contains what it does, and so pruning after a config edit is a
+ * delete rather than a guess. It is a view over `knowledge/` — no document bytes are copied here,
+ * which is what keeps a filter change from duplicating the corpus.
+ */
+export interface LibraryManifest {
+  name: string
+  filter: LibraryFilter
+  /** Knowledge document keys, sorted. */
+  members: string[]
+  count: number
+  updated_at: string
+}
+
+/** Registry of materialized libraries, so a stale manifest can be detected and pruned. */
+export interface LibraryIndex {
+  libraries: Record<string, { count: number; updated_at: string }>
+  updated_at: string
+}
+
 /** Knowledge manifest stored in R2 at knowledge/<id>/manifest.json */
 export interface KnowledgeManifest {
   id: string

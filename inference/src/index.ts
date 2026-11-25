@@ -160,7 +160,10 @@ export async function createApp(opts: CreateAppOptions = {}) {
   await ctx.plugin(ApiChatService, { users: config.users, adapters: config.adapters, vllm, latestVersion, authMiddleware })
   await ctx.plugin(ApiSystemOneService, { enabled: config.inference.systemone.enabled, users: config.users, adapters: config.adapters, vllm, latestVersion, authMiddleware })
   await ctx.plugin(SessionCollectorService, { storage })
-  await ctx.plugin(DataDocumentsService, { storage })
+  await ctx.plugin(DataDocumentsService, { storage, libraries: config.libraries })
+  // Library manifests are materialized during construction; serving a chat before they exist would
+  // let a job queue against stale membership (#196).
+  await (ctx as any).dataDocuments.ready
   await ctx.plugin(DataSessionsService, { storage })
   await ctx.plugin(DataFeedbackService, { storage, rewardRange: config.training?.methods?.weighted_kto?.reward_range })
 

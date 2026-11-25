@@ -255,6 +255,51 @@ users:
       training: "general"
 ```
 
+## libraries
+
+A **library** is a saved selector over the knowledge corpus: a name plus a filter, so a training
+job can say `library:onboarding` instead of enumerating document ids that change every time someone
+uploads. It is a *view*, not a copy — the objects stay under `knowledge/` and the library stores only
+which members it resolved to.
+
+```yaml
+libraries:
+  - name: onboarding
+    filter:
+      tags: [wiki, onboarding]
+      source_type: document
+  - name: contracts
+    filter:
+      tags: [legal]
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Library identifier, used as `library:<name>` in `data_scopes`. Unique across the section. |
+| `filter.tags` | `string[]` | No | Match documents carrying **all** listed tags. |
+| `filter.source_type` | `'document' \| 'repository' \| 'dataset'` | No | Match the upload's classification. |
+| `filter.ids` | `string[]` | No | Explicit member ids. Combined with the other clauses by AND. |
+
+Omitting `libraries:` entirely is valid, and every existing `saip.yaml` keeps loading: the section is
+additive, and `data_scopes` values without a `library:` prefix mean what they meant before.
+
+### How a library becomes data
+
+The inference gateway owns the knowledge index, so it is the one that materializes each library as
+`libraries/<name>/manifest.json` — member keys plus the filter that produced them, rewritten when a
+document is added or deleted. Training resolves `library:<name>` by reading that manifest, which
+keeps the writer single and the reader cheap (design record §P1, epic #64 B3).
+
+Because the manifest records the resolved filter, an operator can see *why* a library contains what
+it does, and editing the filter re-materializes rather than duplicating bytes.
+
+### Failure semantics
+
+An unknown `library:<name>`, or one that resolves to zero members, is a **job failure with a
+structured error before any configuration is materialized** — never an empty dataset. Training on
+nothing would silently un-learn behaviors the base model had, which is the worst kind of success:
+`200`, `succeeded`, and a worse adapter. See [Learning API](/saip/reference/api-training/).
+
 ## inference
 
 Inference gateway service configuration.

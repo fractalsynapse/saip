@@ -41,10 +41,10 @@ Declares how a leaf adapter learns — the formal path from accumulated data to 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `strategy` | string | Yes | Registered training strategy plugin name (`knowledge_embedding`, `corrective_sft`, `weighted_kto`, …) |
-| `data_scopes` | string[] | Yes | Data types from the Data API registry feeding this adapter (`documents`, `sessions`, `feedback`, …) |
+| `data_scopes` | string[] | Yes | Data sources feeding this adapter: `documents`, `sessions`, `feedback`, or a saved selector `library:<name>` (see [libraries](/saip/reference/configuration/#libraries)) |
 | `params` | object | No | Strategy-specific job defaults (epochs, learning_rate, …) |
 
-A learning job that targets an adapter inherits its `strategy` and `data_scopes` unless the request overrides them explicitly. See [Learning API](/saip/reference/api-training/).
+A learning job that targets an adapter inherits its `strategy` and `data_scopes` unless the request overrides them explicitly. A `library:<name>` scope resolves at job time against the manifest the inference gateway materializes from the [libraries config](/saip/reference/configuration/#libraries); an unknown or empty library fails the job before any training runs. See [Learning API](/saip/reference/api-training/).
 
 ## Composition Spec (`composite:`)
 

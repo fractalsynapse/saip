@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Context } from 'cordis'
 import { MemoryStorage, BearerTokenAuth } from '@saip/shared'
+import { seededStore } from './helpers/corpus.js'
 import { LearningApiService } from '../src/plugins/learning-api.js'
 import { createMiddleware } from 'hono/factory'
 
@@ -41,7 +42,7 @@ let app: any
 let storage: MemoryStorage
 
 beforeEach(async () => {
-  storage = new MemoryStorage()
+  storage = await seededStore()
   const ctx = new Context()
   await ctx.plugin(LearningApiService, {
     adapters, registeredStrategies: ['corrective_sft'], storage, authMiddleware: authMiddleware(TOKEN),
