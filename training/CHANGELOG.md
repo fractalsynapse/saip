@@ -1,6 +1,9 @@
 # Changelog — @saip/training
 
 ## [Unreleased]
+### Added
+- `POST /v1/learning/jobs` resolves the job's scopes before accepting, refusing with a structured `422` (`empty_scope` / `unknown_scope` / `library_not_found`) and writing the refusal as a `failed` record — no event, no materialized config, no silent zero-record dataset (#196).
+
 ### Changed
 - **`POST /v1/learning/jobs` returns the record, not a summary**: `job_id` is now `id`, and `inherited` carries the `{ strategy, data_scopes }` booleans from `ResolvedJob` instead of re-listing the scopes. No in-repo consumer read the old body; `api-training.mdx` and the training tutorial were updated in the same commit (#197a).
 

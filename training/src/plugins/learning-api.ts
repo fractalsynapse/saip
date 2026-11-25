@@ -13,6 +13,7 @@ import type { MiddlewareHandler } from 'hono'
 import type { AdapterDefinition, LearningJobRecord, StorageProvider } from '@saip/shared'
 import { resolveJobLinkage, type JobRequest } from '../lib/job-linkage.js'
 import { JobStore, findSecretParam, newJobId } from '../lib/job-store.js'
+import { resolveScopes } from '@saip/shared'
 
 export interface LearningApiConfig {
   /**
@@ -60,10 +61,15 @@ export class LearningApiService extends Service {
     this.strategies = config.registeredStrategies ?? []
     this.defaultAdapterFor = config.defaultAdapterFor ?? (() => undefined)
     this.authMiddleware = config.authMiddleware
+    this.storageRef = config.storage
     this.store = new JobStore(config.storage)
     this.ready = this.store.sweepInterrupted().then(() => undefined)
     this.routes()
   }
+
+  /** The provider jobs were resolved against — scope resolution must not build a second one. */
+  private storageRef?: StorageProvider
+  private storeStorage(): StorageProvider { return this.storageRef! }
 
   setRegistry(adapters: AdapterDefinition[]) { this.adapters = adapters }
   setStrategies(strategies: string[]) { this.strategies = strategies }
@@ -125,6 +131,18 @@ export class LearningApiService extends Service {
       // Write-ahead, in this order: the object, then the index, then the event. A consumer of the
       // event can always read the record it describes.
       await this.store.create(record)
+
+      // P1 scope resolution, at the boundary rather than in a later worker (#196, Review Focus #5).
+      // The gateway has the storage seam, so it can answer "is there anything to train on?" now
+      // instead of after a runner exists. A refusal is still a job: the record is transitioned to
+      // failed with the structured code, because an untraceable 422 leaves the operator asking why
+      // nothing happened, and "nothing happened" is exactly the silence this whole slice is against.
+      const resolution = await resolveScopes(record, this.storeStorage())
+      if (!resolution.ok) {
+        const failed = await this.store.transition(record.id, 'failed', { error: resolution.error })
+        return c.json({ error: resolution.error, job: failed ?? { ...record, status: 'failed', error: resolution.error } }, 422)
+      }
+
       this.ctx.emit('learning/job-queued', { jobId: record.id, adapter: record.adapter, strategy: record.strategy })
       return c.json(record, 202)
     })

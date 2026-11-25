@@ -11,6 +11,7 @@ export * from './hosting.js'
 export * from './secrets-store.js'
 export * from './profiles.js'
 export * from './storage.js'
+export * from './scopes.js'
 export * from './auth.js'
 export * from './monitoring.js'
 // Services require a Cordis runtime; import from '@saip/shared/services'.

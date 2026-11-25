@@ -121,7 +121,7 @@ Trigger a new training job. Jobs target a **leaf adapter** in the registry; when
 |-----------------|----------|----------|------------------------------------------------------|
 | `adapter`       | `string` | No       | Target adapter name from the registry. Defaults to the caller's `users[].adapters.training`. Must be a leaf — composites return `422`. |
 | `strategy`      | `string` | No       | Registered training strategy plugin. Defaults to the adapter's declared `training.strategy`. |
-| `data_ids`      | `string[]` | No     | Explicit document/session/feedback IDs. Default: all untrained data within the adapter's declared `data_scopes`. |
+| `data_ids`      | `string[]` | No     | Explicit document/session/feedback IDs, ANDed with the adapter's declared `data_scopes`. Matching nothing is `422 empty_scope`, not an empty dataset. |
 | `params`        | `object` | No       | Strategy-specific parameter overrides (defaults merge from the adapter's `training.params`). |
 
 :::note[Adapter → Strategy → Data Path]
@@ -159,6 +159,18 @@ notification, the object in storage is the truth.
 | `422` | `composite_not_trainable` | `adapter` names a composite (`trainable: false`) |
 | `422` | `unknown_strategy` | `strategy` is not a registered plugin |
 | `422` | `forbidden_param` | A `params` key matches `token`/`secret`/`key`/`passw` — see the redaction rule below |
+| `422` | `unknown_scope` | An inherited `data_scopes` entry is not `sessions`, `feedback`, `documents` or `library:<name>` |
+| `422` | `library_not_found` | `library:<name>` has no materialized manifest at `libraries/<name>/manifest.json` |
+| `422` | `empty_scope` | A scope resolved to zero records (no sessions, no feedback, an empty library, or `data_ids` that match nothing) |
+
+:::note[A refusal is still a record]
+Queueing resolves the adapter's `data_scopes` against storage **before** accepting the job, so a typo
+in a scope name or an empty corpus is a `422` at the boundary instead of a training run that reports
+success after un-learning behavior. The refusal is still written to `jobs/<id>.json` with
+`status: 'failed'` and the structured error, and it appears in the list routes: an operator asking
+"why is there no job for that attempt" gets an answer. Nothing is emitted on
+`learning/job-queued` for a refused job, and no configuration is materialized.
+:::
 
 :::note[`params` are rejected, not redacted]
 A job record is written to cloud storage, and a wizard-passed credential that arrives as a
@@ -166,6 +178,27 @@ A job record is written to cloud storage, and a wizard-passed credential that ar
 the API (`422 forbidden_param`) is the same stance `saip deploy` takes: the value never enters
 SAIP state, so there is nothing to sanitize later.
 :::
+
+## Scope Resolution
+
+`data_scopes` is inherited from the adapter definition (the request offers no override, which is why
+`inherited.data_scopes` is `true` by construction). At queue time the training gateway resolves each
+entry through the shared `StorageProvider` seam — never a concrete client — so the same code path runs
+against memory in tests, the in-process fake in CI, and R2 in production:
+
+| Scope | Resolves to |
+|---|---|
+| `sessions` | every `sessions/<id>/conversation.jsonl` |
+| `feedback` | every `feedback/<id>.json` |
+| `documents` | one object per knowledge document, preferring `processed.md`, then `source.<ext>`, then the legacy `content.<ext>` |
+| `library:<name>` | the member keys recorded in `libraries/<name>/manifest.json`, verified present |
+
+Libraries are declared in [`libraries:` config](/saip/reference/configuration/#libraries) and
+materialized by the inference gateway, which owns the knowledge index; the manifest records the filter
+that produced it ([bucket layout](/saip/reference/r2-bucket-layout/#librariesnamemanifestjson)).
+
+The first unresolvable scope aborts the request. A partially-resolved dataset is not a thing: silently
+dropping one scope would train on a corpus the operator never chose.
 
 ## The Job Record
 

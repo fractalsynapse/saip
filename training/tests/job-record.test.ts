@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { Context } from 'cordis'
 import { MemoryStorage, type LearningJobRecord } from '@saip/shared'
+import { seededStore } from './helpers/corpus.js'
 import { LearningApiService } from '../src/plugins/learning-api.js'
 
 const adapters = [
@@ -24,7 +25,9 @@ const adapters = [
   { name: 'team', scope: 'user' as const, user: 'ada', trainable: false, composite: { gain: 1, merge: 'weighted_linear' as const, components: [{ adapter: 'coding', weight: 1 }, { adapter: 'research', weight: 1 }] } },
 ]
 
-async function boot(storage = new MemoryStorage(), events: string[] = []) {
+/** Queueing is gated on scope resolution (#196), so every fixture needs a resolvable corpus. */
+async function boot(storage?: MemoryStorage) {
+  storage ??= await seededStore()
   const ctx = new Context()
   ctx.on('learning/job-queued', async () => {
     // Read the store from inside the event: this only passes if the record was written first.
@@ -88,7 +91,7 @@ describe('write-ahead persistence', () => {
 describe('id derivation', () => {
   it('two compositions never mint the same id — the old counter reset at boot (#2.3)', async () => {
     const a = await boot()
-    const b = await boot(new MemoryStorage())
+    const b = await boot(await seededStore())
     const idA = (await (await post(a.app, { adapter: 'coding' })).json()).id
     const idB = (await (await post(b.app, { adapter: 'coding' })).json()).id
     expect(idA).not.toBe(idB)
@@ -106,7 +109,7 @@ describe('id derivation', () => {
 
 describe('boot-time interruption sweep', () => {
   it('a running record from a previous process becomes failed{interrupted} at construction', async () => {
-    const storage = new MemoryStorage()
+    const storage = await seededStore()
     const stale: LearningJobRecord = {
       id: 'train-20260101-oldjob-0001', caller: 'adrian', adapter: 'coding', strategy: 'corrective_sft',
       data_scopes: ['sessions', 'feedback'], params: {}, inherited: { strategy: true, data_scopes: true },
@@ -128,7 +131,7 @@ describe('boot-time interruption sweep', () => {
   })
 
   it('leaves records in any other state alone', async () => {
-    const storage = new MemoryStorage()
+    const storage = await seededStore()
     const done: LearningJobRecord = {
       id: 'train-20260101-done-0001', adapter: 'coding', strategy: 'corrective_sft', data_scopes: [],
       params: {}, inherited: { strategy: true, data_scopes: true }, status: 'succeeded',

@@ -20,7 +20,8 @@
     "./types": "./dist/types.js",
     "./storage": "./dist/storage.js",
     "./r2-client": "./dist/r2-client.js",
-    "./testing": "./dist/testing/index.js"
+    "./testing": "./dist/testing/index.js",
+    "./scopes": "./dist/scopes.js"
   },
   "scripts": {
     "build": "tsc",
