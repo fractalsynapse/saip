@@ -47,18 +47,30 @@ export interface CreateAppOptions {
   monitoring?: MonitoringProvider
 }
 
-/** Build a latestVersion fn: prefer injected, else read the R2 adapter index. */
+/**
+ * Build a `latestVersion` fn: prefer an injected one, else read the adapter index (#198b).
+ *
+ * This is the production `VersionSource` the design record calls for — the adapter compiler and the
+ * chat path already defined the slot; what was missing was an implementation that reads the bucket
+ * rather than a test stand-in. `@latest` is derived from `adapters[name].latest`, so there is no
+ * alias object that can disagree with the version it names.
+ *
+ * The index is refreshed lazily because callers of `VersionSource` are synchronous: read once at
+ * boot, and re-read after a miss so a promotion becomes visible on the next request without a
+ * restart. A failed read is a warning, not an empty map (see the load body) — treating an outage as
+ * "nothing promoted yet" turns a bucket problem into a wave of `no promoted version` errors.
+ */
 async function makeLatestVersion(
   storage: StorageProvider,
   override?: (name: string) => number | undefined,
 ): Promise<(name: string) => number | undefined> {
   if (override) return override
-  let aliases: Record<string, string> = {}
+  let lineages: Record<string, { latest: number }> = {}
   let loaded = false
   const load = async (): Promise<void> => {
     try {
       const raw = await storage.get('adapters/_index.json')
-      if (raw) aliases = (JSON.parse(raw).aliases ?? {})
+      if (raw) lineages = (JSON.parse(raw).adapters ?? {})
     } catch (e) {
       // Absent index is normal (nothing trained yet); an unreadable one is not. Silently treating
       // a transport failure as "no versions" makes every later request fail with
@@ -74,16 +86,17 @@ async function makeLatestVersion(
   // the next request uses it without any client-side change".
   await load()
   return (name: string) => {
-    const lookup = () => aliases[`${name}@latest`]
-    let concrete = lookup()
-    if (!concrete && loaded) {
-      // Fire a refresh and, since we cannot await here, resolve from the next request onward.
+    // `latest` is a number in the index; the six-digit padded form is an id-rendering concern of the
+    // chat path, not something the source should be re-parsing out of a string.
+    const resolved = lineages[name]?.latest
+    if (resolved !== undefined && resolved > 0) return resolved
+    if (loaded) {
+      // Nothing for this name in the snapshot. Refresh so a promotion that landed after boot becomes
+      // visible from the next request; the callers of VersionSource are synchronous, so this request
+      // answers with undefined and serve-resolver reports `no promoted version for "…"`.
       void load()
-      return undefined
     }
-    if (!concrete) return undefined
-    const m = concrete.match(/@(\d+)$/)
-    return m ? Number.parseInt(m[1], 10) : undefined
+    return undefined
   }
 }
 

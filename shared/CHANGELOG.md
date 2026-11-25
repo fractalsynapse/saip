@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `AdapterIndex` now describes the promoted-lineage shape (`{ adapters: { name: { latest, versions } } }`) with `AdapterLineage` and `AdapterVersionEntry`; the `aliases` field is gone because `@latest` is derived (#198b).
+
 - `scopes.ts`: `resolveScopes()` turning `data_scopes` into concrete member keys over the storage seam, with `selectKnowledgeObject()` as the single object-preference rule both gateways use (#196).
 - `LibraryDefinition`, `LibraryFilter`, `LibraryManifest`, `LibraryIndex` types for the `libraries:` config section (#196).
 

@@ -79,10 +79,32 @@ export interface AdapterManifest {
   updated_at: string
 }
 
-/** Global adapter index stored in R2 at adapters/_index.json */
+/** One promoted version's entry in the index. Enough to answer "what produced this" without reading the version manifest. */
+export interface AdapterVersionEntry {
+  job_id: string
+  base_model: string
+  trained_at: string
+  records?: number
+}
+
+/** One adapter lineage: its versions and the pointer `@latest` resolves through. */
+export interface AdapterLineage {
+  latest: number
+  versions: Record<string, AdapterVersionEntry>
+}
+
+/**
+ * Global adapter index stored at `adapters/_index.json`.
+ *
+ * This replaced the earlier `{ adapters: Record<canonicalId, AdapterManifest>, aliases: {...} }`
+ * shape in #198b. That design kept two objects in charge of one fact — a promotion wrote the version
+ * record and then moved an alias — so a crash in between left `@latest` naming bytes that were never
+ * uploaded. Holding `latest` inside the lineage makes the index write the single commit point, which
+ * is what the promotion ordering in `training/src/plugins/r2-sync.ts` depends on. No `aliases` map
+ * exists anymore: `@latest` is derived, so it cannot go stale.
+ */
 export interface AdapterIndex {
-  adapters: Record<string, AdapterManifest>
-  aliases: Record<string, string>  // e.g., "general@latest" → "general@000042"
+  adapters: Record<string, AdapterLineage>
   updated_at: string
 }
 
