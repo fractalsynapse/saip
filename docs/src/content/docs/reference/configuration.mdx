@@ -177,6 +177,12 @@ is **no S3 SDK dependency**, on purpose: four operations do not justify adding t
 first heavy runtime dependency. `list()` requests 1,000 keys per page, merges pages, and sorts
 the union before returning — the bucket layout's corpus is expected to outgrow one page.
 
+The endpoint is not Cloudflare-specific: the client speaks path-style S3, so a local
+S3-compatible server (MinIO, the suite's in-process fake) is a valid value. That is what makes the
+loop runnable with **no cloud account** — the bucket is the only external dependency of the
+learning loop, and any S3 API stands in. Signature V4 region is `auto`, which R2 accepts and most
+S3 servers ignore.
+
 Objects are laid out and indexed under the prefixes in
 [R2 bucket layout](../r2-bucket-layout/); writes there follow the bytes → manifest → index
 order, so a crash leaves an orphan object rather than a dangling index entry.
