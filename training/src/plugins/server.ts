@@ -29,20 +29,40 @@ export interface TrainingServerConfig {
 
 export class TrainingServerService extends Service {
   static readonly provide = 'trainingServer'
-  static readonly inject = ['learningApi', 'axolotlRunner'] as const
+  // Only `learningApi`: Cordis refuses a cross-service read that was not declared, and declaring a
+  // dependency the plugin does not use (the runner is handed to `startClaiming()` by the entry point)
+  // made the whole service unresolvable wherever that peer had not been installed.
+  static readonly inject = ['learningApi'] as const
   readonly app = new Hono()
+  private readonly ctx: Record<string, any>
   private server?: ServerType
   private timer?: NodeJS.Timeout
+  private mounted = false
 
   constructor(ctx: any, cfg: TrainingServerConfig = {}) {
     super(ctx, 'trainingServer')
-    const c = ctx as Record<string, any>
+    this.ctx = ctx as Record<string, any>
+    void cfg
 
     // Health first: an orchestrator needs to distinguish "container up" from "service answering",
     // which is exactly the distinction that let a non-listening process look healthy.
     this.app.get('/health', (h) => h.json({ status: 'ok', service: 'training' }))
-    if (c.learningApi?.app) this.app.route('/', c.learningApi.app)
-    void cfg
+  }
+
+  /**
+   * Mount the routes the moment something asks to serve.
+   *
+   * Declaring `static inject` was the first attempt and it made the service unresolvable in a context
+   * where an injected dependency had not been installed — the whole gateway then came back with
+   * `ctx.trainingServer === undefined`, which is a worse failure than the one being fixed. Mounting at
+   * `start()` keeps the plugin order-free: whatever has registered by the time the port is bound is
+   * what gets served.
+   */
+  private mount(): void {
+    if (this.mounted) return
+    this.mounted = true
+    const api = this.ctx.learningApi?.app
+    if (api) this.app.route('/', api)
   }
 
   /** Resolve the listen port: explicit arg → SAIP_TRAINING_PORT → saip.yaml training.port → 8001. */
@@ -64,6 +84,7 @@ export class TrainingServerService extends Service {
   }
 
   start(port: number): ServerType {
+    this.mount()
     this.server = serve({ fetch: this.app.fetch, port })
     return this.server
   }
