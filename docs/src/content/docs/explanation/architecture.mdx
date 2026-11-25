@@ -150,7 +150,7 @@ When a request arrives at the inference gateway, it goes through a deterministic
 
 1. **Caller identification**: extract the caller ID from the API key, header, or user manifest.
 2. **Adapter lookup**: consult the user manifest (`users.yaml`) to find the caller's assigned adapter group.
-3. **Alias resolution**: resolve aliases like `general@latest` to concrete adapter versions via `adapters/_index.json`.
+3. **Version resolution**: `general@latest` reads `adapters.general.latest` from `adapters/_index.json` (#198b) — a derived pointer, not a stored alias, so one write commits a promotion.
 4. **vLLM injection**: pass the resolved adapter ID as a request parameter to vLLM, which selects the corresponding LoRA weights from its loaded set.
 5. **Session recording**: log the request/response pair to `sessions/<id>/` in R2 for future training data.
 
