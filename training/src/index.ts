@@ -94,6 +94,8 @@ export async function createApp(opts: CreateAppOptions = {}) {
   })
   await ctx.plugin(MetricsService, { provider: opts.monitoring })
 
+  process.stderr.write(`[saip-training] ${storageSummary(storage)}\n`)
+
   const security = opts.security ?? { dev_mode: false, api_tokens: [] }
   const provider = pickAuthProvider(security, (ctx as any).secrets)
   const authMiddleware = createMiddleware(async (c: any, next: any) => {
@@ -104,19 +106,30 @@ export async function createApp(opts: CreateAppOptions = {}) {
   })
 
   await ctx.plugin(LearningApiService, {
+    storage,
     adapters: opts.adapters,
     registeredStrategies: opts.registeredStrategies,
     defaultAdapterFor: opts.defaultAdapterFor,
     authMiddleware,
   })
 
+  // The interruption sweep is part of coming up, not a background chore: until it finishes, the
+  // store still says a dead process's job is `running`, and anything reading during that window —
+  // including the first request of the boot — is told a lie about live work (#197a).
+  try {
+    await (ctx as any).learningApi.ready
+  } catch (e) {
+    // Refusing to boot is the point: without reading `jobs/` this gateway cannot know whether a
+    // job is running on a worker somewhere else, and "single-flight" is only real if the record
+    // store answers. Starting anyway would let a second job claim the same GPU.
+    throw new Error(`refusing to start: ${(e as Error).message} (jobs/ must be reconciled before queueing work)`)
+  }
+
   // Monitoring bridge: count queued learning jobs. Observe-only.
   ctx.on('learning/job-queued', () => (ctx as any).metrics.counter('saip_learning_jobs_queued_total'))
-  // The provider is resolved and reported here; the plugins that consume it — the `jobs/` store
-  // (#197a) and `r2Sync` (#198b) — are the reason it exists. Handing it to a plugin that cannot
-  // use it yet would be decorative wiring, so it is named in the boot output instead: an operator
-  // needs to see which store the gateway that is about to write job records to actually chose.
-  process.stderr.write(`[saip-training] ${storageSummary(storage)}\n`)
+  // The provider is named in boot output because it decides where job records go: an operator
+  // asking "why did my job vanish" needs to know the gateway booted on a volatile store.
+  // `r2Sync` (#198b) is the other consumer.
   // Remaining plugins (axolotlRunner, r2Sync) register here as they are implemented.
   return ctx
 }

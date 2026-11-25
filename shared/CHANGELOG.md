@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `LearningJobRecord`, `LearningJobStatus`, `LearningJobSummary` and `LearningJobIndex` in `types.ts` — the persisted job shape from design record §2.2, so training, the runner and `r2Sync` read and write one shape rather than three (#197a).
+
 - `storage.ts`: `StorageProvider`, `MemoryStorage`, `storageProviderFor()` and the selection policy (design record §1.3) — previously declared inside `@saip/inference`, where training could not use it without duplicating it (#198).
 - `r2-client.ts`: R2/S3 client with SigV4 signing via `node:crypto`, `list()` paging past the 1,000-key cap, and typed 404 → `undefined`. No new runtime dependency (#198).
 - `testing/fake-s3.ts` (subpath `./testing`): in-process S3 fake with an **independent** signature verifier, plus truncation/shuffle/fault hooks, so the contract suite can prove its own detectors fail. Shared by both gateways and the loop e2e rather than copied (#198).

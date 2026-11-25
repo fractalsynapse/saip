@@ -29,9 +29,12 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 │       ├── artifacts/
 │       │   └── <artifact-files>
 │       └── manifest.json
-└── feedback/
+├── feedback/
+│   ├── _index.json
+│   └── <feedback-id>.json
+└── jobs/
     ├── _index.json
-    └── <feedback-id>.json
+    └── <job-id>.json
 ```
 
 ## adapters/
@@ -176,6 +179,30 @@ Stores human or automated feedback records linked to sessions, used for weighted
 | `dimensions`    | `Record<string, number>?` | Multi-dimensional reward breakdown.                   |
 | `feedback_text` | `string?`                 | Free-form human commentary.                           |
 | `created_at`    | `string` (ISO 8601)       | Record creation timestamp.                            |
+
+## jobs/
+
+Written only by the training gateway. A job is a single flat object rather than a directory
+because the record is read whole by every consumer (the runner, `r2Sync`, an operator asking
+"what happened"), and unlike documents it has no large payload beside it — the dataset and the
+Axolotl config it produces live at `jobs/<id>/dataset/…` and `jobs/<id>/axolotl.yaml` once those
+stages land (#196, #197).
+
+### jobs/_index.json
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jobs` | `Record<string, JobSummary>` | Map of job id → `{ status, adapter, strategy, created_at, updated_at }`. |
+| `updated_at` | `string` (ISO 8601) | Last modification timestamp. |
+
+### jobs/\<id\>.json
+
+The [`LearningJobRecord`](/saip/reference/api-training/#the-job-record) — status, linkage,
+dataset/config/artifact references, and the append-only `history` of transitions.
+
+**Single writer.** Only the training gateway mutates `jobs/`. Reads come from anywhere; the
+inference gateway never writes a job it did not create. This invariant is what makes the MVP's
+"index is not authoritative until list-authoritative reads land" safe rather than optimistic.
 
 ## Index File Conventions
 

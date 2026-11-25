@@ -86,6 +86,63 @@ export interface AdapterIndex {
   updated_at: string
 }
 
+export type LearningJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+/** One append-only status change. `detail` carries the runner's short reason, never a log blob. */
+export interface JobHistoryEntry {
+  at: string
+  status: string
+  detail?: string
+}
+
+/**
+ * Persisted learning-job record, stored at `jobs/<id>.json` (design record §2.2).
+ *
+ * Every field has a named consumer: `dataset.sha256` is the determinism proof #196 is judged by,
+ * `artifact` is what `r2Sync` uploads, `version` is assigned only at promotion so a succeeded job
+ * that was never promoted says so by leaving it absent, and `history` is the audit trail a
+ * training run needs when the process that ran it is gone.
+ *
+ * There is deliberately no `progress` field: nothing produces a meaningful fraction, and a number
+ * that is always 0 or always guessed is worse than no number.
+ */
+export interface LearningJobRecord {
+  id: string
+  /** Authenticated principal, from the existing x-saip-caller/principal path. */
+  caller?: string
+  adapter: string
+  strategy: string
+  data_scopes: string[]
+  data_ids?: string[]
+  params: Record<string, unknown>
+  inherited: { strategy: boolean; data_scopes: boolean }
+  status: LearningJobStatus
+  error?: { code: string; message: string }
+  dataset?: { key: string; sha256: string; records: number; format: string }
+  config?: { key: string; sha256: string }
+  artifact?: { prefix: string; base_model: string }
+  /** Assigned at promotion ONLY; links back via the adapters index. */
+  version?: number
+  history: JobHistoryEntry[]
+  created_at: string
+  updated_at: string
+}
+
+/** What `jobs/_index.json` holds per job — enough to filter a list without reading every record. */
+export interface LearningJobSummary {
+  status: LearningJobStatus
+  adapter: string
+  strategy: string
+  created_at: string
+  updated_at: string
+}
+
+/** Index of job summaries. Single-writer: only the training gateway mutates `jobs/`. */
+export interface LearningJobIndex {
+  jobs: Record<string, LearningJobSummary>
+  updated_at: string
+}
+
 /** Knowledge manifest stored in R2 at knowledge/<id>/manifest.json */
 export interface KnowledgeManifest {
   id: string
