@@ -13,6 +13,50 @@ The training gateway exposes a single API surface:
 
 Data ingestion is handled by the inference gateway (see [Inference API](/saip/reference/api-inference/)). Processed data flows between the two services via R2 object storage.
 
+## Running the Gateway
+
+The training gateway is a program that listens. `node training/dist/index.js` (the container `CMD`)
+binds the port from `saip.yaml`'s `training.port`, overridable by `SAIP_TRAINING_PORT`, and serves the
+routes on this page:
+
+```bash
+SAIP_TRAINING_PORT=8001 node training/dist/index.js
+# [saip-training] storage: R2StorageProvider
+# [saip-training] Learning API listening on :8001
+
+curl -s http://127.0.0.1:8001/health
+curl -s -H "Authorization: Bearer $SAIP_TOKEN" http://127.0.0.1:8001/v1/learning/strategies
+```
+
+:::warning[It did not always listen]
+Until #218 the entry point logged `Gateway starting...` and exited 0 without binding a socket, while
+compose mapped port 8001 and the docs showed `curl http://localhost:8001/...`. Every route on this
+page was reachable only from inside the test process. `training/tests/serve-program.test.ts` now
+starts the built artifact and fails if nothing answers.
+:::
+
+### Who runs a job
+
+Queuing a job writes a record; nothing executes it unless a process claims it. Claiming is opt-in:
+
+```bash
+SAIP_TRAINING_RUN=1 node training/dist/index.js    # serve AND claim queued jobs
+```
+
+Without it the gateway serves reads and accepts jobs but never touches the GPU. That is deliberate.
+On a single card, training and serving are time-shared through `saip awake` / `saip sleep` — a gateway
+that claimed jobs the moment it booted would seize memory the inference engine is holding, and the
+symptom would be an OOM in whichever process lost. The operator sets `SAIP_TRAINING_RUN=1` in the
+window where the card belongs to training.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SAIP_TRAINING_PORT` | `training.port` from `saip.yaml` (8001) | Listen port |
+| `SAIP_TRAINING_RUN` | unset | When `1`, poll for `queued` jobs and execute them one at a time |
+| `SAIP_TRAINING_POLL_SECONDS` | `5` | Interval between claims while running |
+| `SAIP_TRAINING_DATA_DIR` | — | Host directory mirrored to the worker's `/app/data`; unset means no mirror |
+| `SAIP_ADAPTER_OUTPUT_DIR` | — | Host directory for `/app/output`; unset means no artifact is found |
+
 ## Authentication
 
 `/v1/learning/jobs*` is authenticated as a **prefix**. Hono's `app.use('/v1/learning/jobs', mw)`

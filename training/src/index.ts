@@ -15,6 +15,7 @@ import { CorrectiveSftService, asPlugin } from './plugins/strategy-corrective-sf
 import { AxolotlRunnerService } from './plugins/axolotl-runner.js'
 import { R2SyncService } from './plugins/r2-sync.js'
 import type { TrainingStrategyPlugin } from './lib/strategy.js'
+import { TrainingServerService } from './plugins/server.js'
 import { createMiddleware } from 'hono/factory'
 
 export interface SecurityConfig {
@@ -176,6 +177,10 @@ export async function createApp(opts: CreateAppOptions = {}) {
         }, e.message)
       })
   })
+  // The HTTP surface. Constructing it binds nothing — `start()` does — so tests that only assert on
+  // routes keep using the in-process app while the entry point gets a listener (#218: the process
+  // used to log "starting" and exit 0 with a mapped port and no socket).
+  await ctx.plugin(TrainingServerService, { env: opts.env ?? process.env, configPath: (opts.env ?? process.env).SAIP_CONFIG })
 
   // Monitoring bridge: count queued learning jobs. Observe-only.
   ctx.on('learning/job-queued', () => (ctx as any).metrics.counter('saip_learning_jobs_queued_total'))
@@ -188,7 +193,20 @@ export async function createApp(opts: CreateAppOptions = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void createApp()
-    .then(() => console.log('[saip-training] Gateway starting...'))
+    .then((ctx) => {
+      const env = process.env
+      const port = TrainingServerService.portFrom(undefined, env, env.SAIP_CONFIG)
+      const c = ctx as any
+      c.trainingServer.start(port)
+      // Claiming is opt-in: on one card, awake/sleep decides who owns the GPU, and a gateway that
+      // trained the moment it booted would take memory from whatever was serving.
+      if (env.SAIP_TRAINING_RUN === '1' && c.axolotlRunner) {
+        const seconds = Number(env.SAIP_TRAINING_POLL_SECONDS ?? '') || 5
+        c.trainingServer.startClaiming(c.axolotlRunner, seconds)
+        console.log(`[saip-training] claiming queued jobs every ${seconds}s`)
+      }
+      console.log(`[saip-training] Learning API listening on :${port}`)
+    })
     .catch((e: unknown) => {
       process.stderr.write(`[saip-training] cannot start: ${(e as Error).message}\n`)
       process.exit(2)
