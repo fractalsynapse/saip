@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- shared, inference, training: **storage selection is fail-closed, so an unconfigured gateway refuses to boot instead of losing data** (#198, part of #198a). `StorageProvider` moved to `@saip/shared/storage` with `R2StorageProvider` (S3 REST + SigV4 from `node:crypto`, no SDK) behind it. Empty `SAIP_R2_BUCKET` is now a startup error naming the variable; the in-memory store requires `SAIP_STORAGE=memory` and announces itself at boot. The inference root's `opts.storage ?? new MemoryStorage()` is gone — every document, session and feedback record it accepted with a 2xx previously lived in a `Map` and vanished at restart. Knowledge uploads now keep `source.<ext>` and `processed.md` apart so a processor change has raw bytes to re-run.
+
 
 - cli: **a repository-wide vocabulary check, because two scoped guards both missed the next case** (#193). `cli/tests/repo-vocabulary.test.ts` scans **every tracked file** for another project's vocabulary — a sibling repository's name, its containers and dev-platform directory, its compose variables and model aliases, its browser-test runner and replay scripts, an unrelated upstream's release identifiers, and skill names in a namespace that is not installed here. Token list assembled from fragments so the scanner does not contain its own prey; exactly one exemption, by full path, asserted to be exactly that one. Scope is asserted (`>200` tracked text files) so an empty file set can never report a pass. It found 55 violations on first run, all outside `.dsh/skills` — the scope both #188 and #190-class fixes had never covered
 

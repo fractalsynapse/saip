@@ -74,7 +74,10 @@ describe('deprecation warnings reach output (#90)', () => {
     const written: string[] = []
     const real = process.stderr.write.bind(process.stderr)
     ;(process as any).stderr.write = (c: any) => { written.push(String(c)); return true }
-    try { await createApp({ configPath: p }) } finally { (process as any).stderr.write = real }
+    // Storage is opted into by name so this test measures what it claims — whether the deprecation
+    // reaches output, not whether an unconfigured bucket refuses to boot (#198).
+    try { await createApp({ configPath: p, env: { SAIP_STORAGE: 'memory' } }) }
+    finally { (process as any).stderr.write = real }
     const text = written.join('')
     expect(text).toMatch(/WARNING/)
     expect(text).toMatch(/security\.ui\.admin_secret/)

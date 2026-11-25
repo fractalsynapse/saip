@@ -9,7 +9,7 @@
 
 import { existsSync } from 'node:fs'
 import { loadYamlConfig } from '@saip/shared'
-import type { AdapterDefinition, UserEntry, ApiTokenConfig } from '@saip/shared'
+import type { AdapterDefinition, UserEntry, ApiTokenConfig, StorageConfig } from '@saip/shared'
 import type { ProfileMap } from '@saip/shared'
 
 export interface Message {
@@ -61,7 +61,8 @@ export interface SaipRuntimeConfig {
       weighted_kto?: { reward_range?: [number, number] }
     }
   }
-  storage?: Record<string, unknown>
+  /** Read by `storageProviderFor()`; `bucket`/`endpoint` arrive interpolated. */
+  storage?: StorageConfig
   security: SecurityConfig
 }
 
