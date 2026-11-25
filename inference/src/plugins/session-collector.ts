@@ -1,6 +1,6 @@
 /**
  * session-collector — persists conversation history to storage on chat/request
- * events so the training gateway can later read sessions as corrective-SFT /
+ * events so the training gateway can later read sessions as corrective_sft /
  * KTO input. Emits session/complete once a session record is written.
  */
 

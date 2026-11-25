@@ -325,7 +325,7 @@ of "validation" from `explanation/learning-loop.mdx` at this stage — the loop 
 ## Decomposition — stacked PRs to staging
 
 Order matters only where a later stage reads an earlier stage's storage; #199/#200 run in parallel, off the
-critical path (the corrective-SFT loop is text-only and needs no OCR).
+critical path (the corrective_sft loop is text-only and needs no OCR).
 
 | Task | Issue slice | Delivers | Done means |
 |---|---|---|---|

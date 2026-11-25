@@ -140,6 +140,7 @@ The registry is validated by a single implementation in `@saip/shared` (`validat
 | Component weights must be finite and ≥ 0 | `invalid_weight` |
 | A composite needs at least two components | `too_few_components` |
 | Users' `adapters.inference` / `adapters.training` must reference existing names | `unknown_adapter_ref` |
+| A built-in strategy must use its canonical spelling (underscores, not hyphens) | `strategy_not_canonical` |
 
 Validation returns structured `{ path, code, message }` errors (not thrown exceptions), so callers can render them. It passes against the shipped example above. The service wrapper (`AdapterRegistryService`) exposes both raw validation and resolved views used by compilation and job linkage.
 
