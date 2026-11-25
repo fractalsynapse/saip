@@ -17,7 +17,10 @@
     "./secret-catalog": "./dist/secret-catalog.js",
     "./secrets-store": "./dist/secrets-store.js",
     "./services": "./dist/services.js",
-    "./types": "./dist/types.js"
+    "./types": "./dist/types.js",
+    "./storage": "./dist/storage.js",
+    "./r2-client": "./dist/r2-client.js",
+    "./testing": "./dist/testing/index.js"
   },
   "scripts": {
     "build": "tsc",
