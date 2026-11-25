@@ -14,6 +14,7 @@ import type { AdapterDefinition, LearningJobRecord, StorageProvider } from '@sai
 import { resolveJobLinkage, type JobRequest } from '../lib/job-linkage.js'
 import { JobStore, findSecretParam, newJobId } from '../lib/job-store.js'
 import { resolveScopes } from '@saip/shared'
+import type { TrainingStrategyPlugin } from '../lib/strategy.js'
 
 export interface LearningApiConfig {
   /**
@@ -23,7 +24,14 @@ export interface LearningApiConfig {
    */
   storage: StorageProvider
   adapters?: AdapterDefinition[]
+  /**
+   * Names accepted by `POST /v1/learning/jobs`. When omitted, they are derived from `strategies` —
+   * the plugins this gateway actually installed. A config list that names a strategy with no plugin
+   * behind it is how a job gets accepted, queued, and then fails for want of a dataset (#196b).
+   */
   registeredStrategies?: string[]
+  /** Installed strategy plugins, used by the export path and by the default name list. */
+  strategies?: TrainingStrategyPlugin[]
   /** Resolve a caller id to their default training adapter (users[].adapters.training). */
   defaultAdapterFor?: (callerId?: string) => string | undefined
   /** Optional auth middleware applied to the whole jobs subtree (fail-closed enforcement). */
@@ -47,6 +55,7 @@ export class LearningApiService extends Service {
   private strategies: string[]
   private defaultAdapterFor: (callerId?: string) => string | undefined
   private authMiddleware?: MiddlewareHandler<any>
+  private plugins: TrainingStrategyPlugin[]
   readonly store: JobStore
   /**
    * Resolves when the boot-time interruption sweep finishes. Every route awaits it, so a request
@@ -58,7 +67,8 @@ export class LearningApiService extends Service {
   constructor(ctx: any, config: LearningApiConfig) {
     super(ctx, 'learningApi')
     this.adapters = config.adapters ?? []
-    this.strategies = config.registeredStrategies ?? []
+    this.plugins = config.strategies ?? []
+    this.strategies = config.registeredStrategies ?? this.plugins.map((p) => p.name)
     this.defaultAdapterFor = config.defaultAdapterFor ?? (() => undefined)
     this.authMiddleware = config.authMiddleware
     this.storageRef = config.storage
@@ -73,6 +83,8 @@ export class LearningApiService extends Service {
 
   setRegistry(adapters: AdapterDefinition[]) { this.adapters = adapters }
   setStrategies(strategies: string[]) { this.strategies = strategies }
+  /** The installed plugins, for callers that export a dataset. */
+  strategyPlugins(): TrainingStrategyPlugin[] { return this.plugins }
 
   private routes() {
     const { app } = this
