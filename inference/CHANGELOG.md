@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- The default `latestVersion` source is now the real production reader for the #198b index shape: `adapters[name].latest` replaces the `aliases` map, a zero/missing lineage answers `no promoted version for "…"` instead of guessing, and an unreadable index warns rather than being treated as empty (#198b).
+
 - The Data API materializes `libraries/<name>/manifest.json` (and `libraries/_index.json`) from its own knowledge index, on boot and after every document create or delete — it owns `knowledge/`, so the views over it follow the single-writer rule. Undeclared libraries are pruned rather than left serving stale membership (#196).
 - `libraries` is read from `saip.yaml`; malformed entries are dropped at load with the failure surfacing at job acceptance, not as an unbootable gateway (#196).
 

@@ -74,7 +74,7 @@ describe('createApp() composition root: env-selected engine backend', () => {
       // seam actually under test here — the engine backend, deliberately NOT injected — stays
       // production-wired. That distinction is the whole point of this file.
       const storage = new MemoryStorage()
-      await storage.put('adapters/_index.json', JSON.stringify({ aliases: { 'general@latest': 'general@42' } }))
+      await storage.put('adapters/_index.json', JSON.stringify({ adapters: { general: { latest: 42, versions: { '42': { job_id: 'j-1', base_model: 'b', trained_at: '2026-01-01T00:00:00Z' } } } } }))
       const ctx = (await createApp({ configPath: devModeConfig(), storage })) as any
 
       const res = await ctx.apiChat.app.request('/v1/chat/completions', {
@@ -122,7 +122,7 @@ describe('createApp() composition root: env-selected engine backend', () => {
     process.env.SAIP_VLLM_BASE_URL = 'http://127.0.0.1:1/v1'
     try {
       const storage = new MemoryStorage()
-      await storage.put('adapters/_index.json', JSON.stringify({ aliases: { 'general@latest': 'general@42' } }))
+      await storage.put('adapters/_index.json', JSON.stringify({ adapters: { general: { latest: 42, versions: { '42': { job_id: 'j-1', base_model: 'b', trained_at: '2026-01-01T00:00:00Z' } } } } }))
       const ctx = (await createApp({ configPath: devModeConfig(), storage })) as any
       const res = await ctx.apiChat.app.request('/v1/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },

@@ -90,7 +90,7 @@ describe('inference composition root resolves storage from config', () => {
 
   it('reads the promoted-version index from the same store', async () => {
     // Seed the index before boot: `makeLatestVersion` loads it at construction.
-    const body = JSON.stringify({ adapters: { general: { latest: 42 } }, aliases: {}, updated_at: '' })
+    const body = JSON.stringify({ adapters: { general: { latest: 42, versions: { '42': { job_id: 'j', base_model: 'b', trained_at: '2026-01-01T00:00:00Z' } } } }, updated_at: '' })
     await fake.putObject('loop-bucket', 'adapters/_index.json', body)
     try {
       const ctx = (await createApp({
