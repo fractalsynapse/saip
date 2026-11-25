@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import type { VllmBackend, VllmChatRequest, VllmChatResponse } from '../src/lib/backends.js'
 
 const repoConfig = fileURLToPath(new URL('../../saip.yaml', import.meta.url))
@@ -23,6 +24,7 @@ async function boot(vllm: VllmBackend) {
   // These tests exercise chat behavior, not auth → run under explicit dev mode.
   const base = (await import('../src/lib/config.js')).loadConfig(repoConfig)
   const ctx = (await createApp({
+    storage: new MemoryStorage(),
     config: { ...base, security: { dev_mode: true, api_tokens: [] } },
     vllm,
     latestVersion: (n) => ({ general: 42, coding: 18, 'default-agent': 3 }[n]),

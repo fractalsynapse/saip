@@ -18,7 +18,9 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 ├── knowledge/
 │   ├── _index.json
 │   └── <knowledge-id>/
-│       ├── content.<ext>
+│       ├── source.<ext>          # original upload bytes
+│       ├── processed.md          # processor intermediate text
+│       ├── content.<ext>         # legacy: pre-#198 processed text
 │       └── manifest.json
 ├── sessions/
 │   ├── _index.json
@@ -73,9 +75,25 @@ Stores ingested knowledge documents used for knowledge-embedding training.
 | `entries`  | `Record<string, KnowledgeManifest>` | Map of knowledge ID → manifest.     |
 | `updated_at` | `string` (ISO 8601)               | Last modification timestamp.        |
 
+### knowledge/\<id\>/source.*
+
+The **original** uploaded bytes, unmodified, under the upload's own extension (`.txt`, `.md`,
+`.json`, `.pdf`, `.png`, …). Preserving raw input is what makes re-processing possible at all:
+a processor fix, a new OCR backend, or a changed chunker is worth nothing if the only bytes on
+disk were produced by the old one. The hash and size in the manifest describe this object.
+
+### knowledge/\<id\>/processed.md
+
+The processor's intermediate text — the Markdown the document pipeline emits, and what
+retrieval and dataset export read. Written after `source.*` and before the index entry
+(bytes → manifest → index), so an index entry never points at bytes that were not stored.
+
 ### knowledge/\<id\>/content.*
 
-The raw knowledge document. Extension varies by source type (`.txt`, `.md`, `.json`, `.pdf`). Content hash is recorded in the manifest.
+**Legacy key, still read.** Before #198 the processed text was stored *as* `content<ext>` and
+the raw upload was discarded. Entries whose manifest names `content.*` keep working: readers
+fall back to it, and no re-ingestion migration is required. New writes use `source.*` plus
+`processed.md` and record both keys.
 
 ### knowledge/\<id\>/manifest.json
 
@@ -88,6 +106,8 @@ The raw knowledge document. Extension varies by source type (`.txt`, `.md`, `.js
 | `source_type`| `'document' \| 'repository' \| 'dataset'` | Classification of the source.          |
 | `license`    | `string?`                     | SPDX license identifier.                         |
 | `hash`       | `string`                      | SHA-256 hash of the content file.                |
+| `source_key` | `string?`                     | Storage key of the original upload (`knowledge/<id>/source.<ext>`). Absent on pre-#198 entries. |
+| `processed_key` | `string?`                  | Storage key of the processed text (`knowledge/<id>/processed.md`). Absent on pre-#198 entries, whose readers fall back to `knowledge/<id>/content.<ext>`. |
 | `size_bytes` | `number`                      | Content file size in bytes.                      |
 | `created_at` | `string` (ISO 8601)           | Creation timestamp.                              |
 | `updated_at` | `string` (ISO 8601)           | Last update timestamp.                           |

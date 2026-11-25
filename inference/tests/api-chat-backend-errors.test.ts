@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import { VllmBackendError } from '../src/lib/vllm-http.js'
 import type { VllmBackend, VllmChatRequest, VllmChatResponse } from '../src/lib/backends.js'
 
@@ -20,6 +21,7 @@ class ErrBackend implements VllmBackend {
 
 async function boot(vllm: VllmBackend) {
   const ctx = (await createApp({
+    storage: new MemoryStorage(),
     config: { ...base, security: { dev_mode: true, api_tokens: [] } },
     vllm,
     latestVersion: (n) => ({ general: 42, coding: 18, 'default-agent': 3 }[n]),
@@ -78,6 +80,7 @@ describe('engine failure surfaces as a typed HTTP error', () => {
 describe('gateway with no engine attached', () => {
   it('boots and answers 503 rather than guessing an endpoint', async () => {
     const ctx = (await createApp({
+    storage: new MemoryStorage(),
       config: { ...base, security: { dev_mode: true, api_tokens: [] } },
       latestVersion: (n) => ({ general: 42, coding: 18, 'default-agent': 3 }[n]),
     })) as any

@@ -1,40 +1,24 @@
 /**
  * Injectable backend seams for the inference gateway.
  *
- * External systems (object storage, the vLLM engine) are reached only through
- * these interfaces so plugins never import a concrete client. In-memory / fake
- * implementations make every endpoint deterministically testable without a GPU
- * or network; the real R2 client and HTTP vLLM adapter drop in unchanged.
+ * External systems (object storage, the vLLM engine) are reached only through these interfaces so
+ * plugins never import a concrete client. Fake implementations make every endpoint testable
+ * without a GPU or network. Object storage is the exception to the rule below: its contract is
+ * shared with the training gateway rather than declared here, see `@saip/shared/storage`.
  */
 
 import type { Message } from './config.js'
 
-export interface StorageProvider {
-  put(key: string, body: string | Uint8Array): Promise<void>
-  get(key: string): Promise<string | undefined>
-  /** Keys under `prefix`, lexicographically sorted. */
-  list(prefix: string): Promise<string[]>
-  /** true if a key existed and was removed. */
-  delete(key: string): Promise<boolean>
-}
-
-/** Default MVP storage: process-lifetime Map. Swap for R2-backed impl later. */
-export class MemoryStorage implements StorageProvider {
-  private readonly map = new Map<string, string>()
-
-  async put(key: string, body: string | Uint8Array): Promise<void> {
-    this.map.set(key, typeof body === 'string' ? body : Buffer.from(body).toString('utf8'))
-  }
-  async get(key: string): Promise<string | undefined> {
-    return this.map.get(key)
-  }
-  async list(prefix: string): Promise<string[]> {
-    return [...this.map.keys()].filter((k) => k.startsWith(prefix)).sort()
-  }
-  async delete(key: string): Promise<boolean> {
-    return this.map.delete(key)
-  }
-}
+/**
+ * The storage contract lives in `@saip/shared/storage` (#198) because training reads exactly the
+ * keys inference writes: two independently-declared interfaces drift, and drift here means a
+ * training job that silently sees nothing. `MemoryStorage` moved with it — it is a test double and
+ * an explicit `SAIP_STORAGE=memory` opt-in, not a production default.
+ *
+ * Re-exported so no import site in this package had to change.
+ */
+export type { StorageProvider } from '@saip/shared/storage'
+export { MemoryStorage, storageProviderFor } from '@saip/shared/storage'
 
 // ─── vLLM backend seam ────────────────────────────────────────
 

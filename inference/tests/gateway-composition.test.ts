@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import type { AdapterDefinition } from '@saip/shared'
 
 describe('inference gateway composition', () => {
@@ -12,13 +13,13 @@ describe('inference gateway composition', () => {
   ]
 
   it('boots a Cordis context with registry + compiler services injected', async () => {
-    const ctx = (await createApp()) as any
+    const ctx = (await createApp({ storage: new MemoryStorage() })) as any
     expect(typeof ctx.adapterRegistry?.validate).toBe('function')
     expect(typeof ctx.adapterCompiler?.plan).toBe('function')
   })
 
   it('compiler plans a composite using injected version source', async () => {
-    const ctx = (await createApp()) as any
+    const ctx = (await createApp({ storage: new MemoryStorage() })) as any
     ctx.adapterCompiler.setRegistry(adapters)
     ctx.adapterCompiler.setVersionSource({ latestVersion: (n: string) => (n === 'coding' ? 18 : n === 'research' ? 7 : undefined) })
     const r = ctx.adapterCompiler.plan('agent')
@@ -31,7 +32,7 @@ describe('inference gateway composition', () => {
   })
 
   it('registry service validates the same adapters the compiler consumes', async () => {
-    const ctx = (await createApp()) as any
+    const ctx = (await createApp({ storage: new MemoryStorage() })) as any
     const result = ctx.adapterRegistry.validate({ adapters, users: [{ id: 'u', adapters: { inference: 'agent@latest', training: 'coding' } }] })
     expect(result.valid).toBe(true)
   })

@@ -8,7 +8,7 @@
 
 import { Context } from 'cordis'
 import { AdapterRegistryService, SecretsService } from '@saip/shared/services'
-import { EnvSecrets, MetricsService, SecretAccessService } from '@saip/shared'
+import { defaultSecretsProvider, MetricsService, SecretAccessService, type SecretsProvider } from '@saip/shared'
 import { AdapterCompilerService } from './plugins/adapter-compiler.js'
 import { GatewayStateService } from './plugins/gateway-state.js'
 import { UserResolverService } from './plugins/user-resolver.js'
@@ -22,7 +22,7 @@ import { DataSessionsService } from './plugins/data-sessions.js'
 import { DataFeedbackService } from './plugins/data-feedback.js'
 import { ServerService } from './plugins/server.js'
 import { loadConfig, type SaipRuntimeConfig } from './lib/config.js'
-import { MemoryStorage, type StorageProvider, type VllmBackend } from './lib/backends.js'
+import { storageProviderFor, type StorageProvider, type VllmBackend } from './lib/backends.js'
 import { HttpVllmBackend } from './lib/vllm-http.js'
 import type { MonitoringProvider } from '@saip/shared'
 
@@ -30,7 +30,16 @@ export interface CreateAppOptions {
   config?: SaipRuntimeConfig
   /** Path to saip.yaml; used only when `config` is not provided. */
   configPath?: string
+  /** Injected in tests. Absent means: resolve from config + env, fail-closed (#198). */
   storage?: StorageProvider
+  /**
+   * The environment this app sees (#198). Replaces `process.env` rather than merging into it, so
+   * a test cannot pass while depending on the developer's shell or on the store at `~/.saip`.
+   * Production leaves it unset.
+   */
+  env?: NodeJS.ProcessEnv
+  /** Secrets source. Defaults to the env → encrypted-store chain built over `env`. */
+  secrets?: SecretsProvider
   vllm?: VllmBackend
   /** Override promoted-version lookup (defaults to reading adapters/_index.json). */
   latestVersion?: (name: string) => number | undefined
@@ -50,8 +59,11 @@ async function makeLatestVersion(
     try {
       const raw = await storage.get('adapters/_index.json')
       if (raw) aliases = (JSON.parse(raw).aliases ?? {})
-    } catch {
-      /* no index yet */
+    } catch (e) {
+      // Absent index is normal (nothing trained yet); an unreadable one is not. Silently treating
+      // a transport failure as "no versions" makes every later request fail with
+      // `no promoted version for "…"`, which reads as a registry problem instead of a storage one.
+      process.stderr.write(`[saip-inference] WARNING: adapter index unreadable from storage: ${(e as Error).message}\n`)
     }
     loaded = true
   }
@@ -101,14 +113,34 @@ export async function createApp(opts: CreateAppOptions = {}) {
   }
   // Defensive: a hand-built config may omit newer optional sections.
   const config: SaipRuntimeConfig = { ...loaded, security: loaded.security ?? { dev_mode: false, api_tokens: [] } }
-  const storage = opts.storage ?? new MemoryStorage()
   const vllm = opts.vllm ?? backendFromEnv()
 
   const ctx = new Context()
-  const latestVersion = await makeLatestVersion(storage, opts.latestVersion)
 
   // Shared services first so dependents can inject them via ctx.
   await ctx.plugin(AdapterRegistryService)
+
+  // No provider override: SecretsService defaults to the env -> encrypted-store chain. Passing a
+  // bare EnvSecrets here silently defeated the store — the config command would save credentials
+  // that the running gateway could never read. Discovered while wiring #93, and it is the
+  // composition-root failure #76 exists to catch: the seam worked in tests because tests inject
+  // providers, while production wiring overrode the one behaviour users were promised.
+  // The chain is still env → encrypted store; threading `env` is what makes it honor an injected
+  // environment instead of the developer's real store. Without that, `createApp({ env })` selects
+  // credentials from one place and storage from another, and a test can pass by reading whatever
+  // happens to live in ~/.saip on the machine running it.
+  await ctx.plugin(SecretsService, { provider: opts.secrets ?? defaultSecretsProvider(opts.env ?? process.env) })
+  await ctx.plugin(SecretAccessService, { env: opts.env ?? process.env })
+
+  // Storage is resolved from config + environment, never defaulted (#198). The previous line was
+  // `opts.storage ?? new MemoryStorage()`, which booted a gateway that accepted every write,
+  // reported success, and dropped the corpus at restart — and left training reading an empty
+  // `sessions/` prefix with nothing distinguishing "collected nothing" from "lost everything".
+  // Tests still inject a provider; that is the seam. What is no longer available is silence.
+  const storage = opts.storage ?? await storageProviderFor({
+    config, secrets: (ctx as any).secrets, env: opts.env ?? process.env,
+  })
+  const latestVersion = await makeLatestVersion(storage, opts.latestVersion)
 
   // Validate the registry FIRST — an invalid registry must fail loudly before any
   // dependent plugin boots (CLI/inference/training agree on validity).
@@ -118,13 +150,6 @@ export async function createApp(opts: CreateAppOptions = {}) {
     throw new Error(`invalid adapter registry: ${codes}`)
   }
 
-  // No provider override: SecretsService defaults to the env -> encrypted-store chain. Passing a
-  // bare EnvSecrets here silently defeated the store — the config command would save credentials
-  // that the running gateway could never read. Discovered while wiring #93, and it is the
-  // composition-root failure #76 exists to catch: the seam worked in tests because tests inject
-  // providers, while production wiring overrode the one behaviour users were promised.
-  await ctx.plugin(SecretsService, {})
-  await ctx.plugin(SecretAccessService, {})
   await ctx.plugin(MetricsService, { provider: opts.monitoring })
   await ctx.plugin(AdapterCompilerService)
   await ctx.plugin(GatewayStateService, { config, storage, vllm })
@@ -154,9 +179,17 @@ export async function createApp(opts: CreateAppOptions = {}) {
 
 // Only boot when run directly (not when imported by tests).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  void createApp().then((ctx) => {
-    const port = Number(process.env.SAIP_INFERENCE_PORT ?? (ctx as any).gatewayState.config.inference.port ?? 8000)
-    ;(ctx as any).server.start(port)
-    console.log(`[saip-inference] Gateway listening on :${port}`)
-  })
+  void createApp()
+    .then((ctx) => {
+      const port = Number(process.env.SAIP_INFERENCE_PORT ?? (ctx as any).gatewayState.config.inference.port ?? 8000)
+      ;(ctx as any).server.start(port)
+      console.log(`[saip-inference] Gateway listening on :${port}`)
+    })
+    // A refusal to start is not a crash. Left unhandled, Node prints the rejection with a stack
+    // trace, which reads as a bug in SAIP rather than as "your configuration is incomplete" —
+    // and the operator has to scroll past internals to find the variable to set (#198).
+    .catch((e: unknown) => {
+      process.stderr.write(`[saip-inference] cannot start: ${(e as Error).message}\n`)
+      process.exit(2)
+    })
 }

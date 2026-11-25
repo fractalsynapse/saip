@@ -117,6 +117,33 @@ R2 was chosen over S3, GCS, MinIO, and local filesystem storage because:
 
 The tradeoff is vendor lock-in to Cloudflare's API surface. For a project designed to run on a single GPU with minimal ops burden, this is acceptable.
 
+### The storage seam, and why memory is opt-in
+
+`StorageProvider` is declared once, in `@saip/shared/storage`, and re-exported by the gateway
+that has always used it (`inference/src/lib/backends.ts`) so no import site changed. Both
+composition roots resolve their provider through the same factory, `storageProviderFor()`:
+
+- **Config selects, code does not.** `storage.r2.bucket` non-empty yields the R2 client.
+- **Empty fails.** An empty bucket is a startup error naming `SAIP_R2_BUCKET`. This is the
+  behaviour the comment in `saip.yaml` has promised since it was written, and nothing
+  implemented until #198.
+- **Memory requires the name.** `SAIP_STORAGE=memory` is the only way to get the in-memory
+  store in production construction, and it prints
+  `storage: EXPLICIT MEMORY — data dies at restart` at boot.
+
+The reason for the hard line is what the old silent default did to the loop: every document,
+session and feedback record the Data API ingested lived in a `Map`, writes reported success,
+and the corpus vanished on restart. A training job that reads `sessions/` after a restart found
+nothing and had no way to tell "no data" from "lost data". Durability is a precondition for the
+rest of the pipeline, so the default had to stop pretending.
+
+The client speaks S3 REST with Signature V4 computed from `node:crypto` rather than an SDK.
+Four operations do not justify the platform's first heavy runtime dependency, and a hand-rolled
+signer is fully covered by the in-process fake S3 endpoint the contract suite runs against.
+Selection semantics and the environment variables are in
+[Configuration reference](/saip/reference/configuration/); the key layout is in
+[R2 bucket layout](/saip/reference/r2-bucket-layout/).
+
 ## The User → Adapter Resolution Chain
 
 When a request arrives at the inference gateway, it goes through a deterministic resolution chain:

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import type { VllmBackend, VllmChatRequest, VllmChatResponse } from '../src/lib/backends.js'
 
 const repoConfig = fileURLToPath(new URL('../../saip.yaml', import.meta.url))
@@ -16,7 +17,7 @@ async function boot(enabled: boolean) {
   cfg.inference.systemone.enabled = enabled
   // systemone behavior tests run under explicit dev mode (auth covered separately).
   cfg.security = { dev_mode: true, api_tokens: [] }
-  const ctx = (await createApp({ config: cfg, vllm: new FakeVllm(), latestVersion: (n) => ({ general: 42, coding: 18, 'default-agent': 3 }[n]) })) as any
+  const ctx = (await createApp({ storage: new MemoryStorage(), config: cfg, vllm: new FakeVllm(), latestVersion: (n) => ({ general: 42, coding: 18, 'default-agent': 3 }[n]) })) as any
   return ctx
 }
 

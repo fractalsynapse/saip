@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { UserEntry } from '@saip/shared'
 import { resolveAdapterForCaller } from '../src/lib/user-resolver.js'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import { fileURLToPath } from 'node:url'
 
 const users: UserEntry[] = [
@@ -33,7 +34,7 @@ describe('UserResolverService (integration)', () => {
   const repoConfig = fileURLToPath(new URL('../../saip.yaml', import.meta.url))
 
   it('resolves known and unknown callers through the booted app', async () => {
-    const ctx = (await createApp({ configPath: repoConfig })) as any
+    const ctx = (await createApp({ configPath: repoConfig, storage: new MemoryStorage() })) as any
     // shipped saip.yaml has only a `default` user
     expect(ctx.userResolver.resolve(undefined).userId).toBe('default')
     expect(ctx.userResolver.resolve('whoever').adapterRef).toBe('default-agent@latest')

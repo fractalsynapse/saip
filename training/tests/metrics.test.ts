@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '@saip/shared'
 import type { MonitoringProvider } from '@saip/shared'
 
 class Counter implements MonitoringProvider {
@@ -15,13 +16,13 @@ const adapters = [{ name: 'coding', scope: 'global', trainable: true, training: 
 describe('training metrics emission', () => {
   it('counts a queued learning job via the event bridge', async () => {
     const sink = new Counter()
-    const ctx = (await createApp({ security: { dev_mode: true }, adapters, registeredStrategies: ['corrective_sft'], monitoring: sink })) as any
+    const ctx = (await createApp({ storage: new MemoryStorage(), security: { dev_mode: true }, adapters, registeredStrategies: ['corrective_sft'], monitoring: sink })) as any
     await ctx.learningApi.app.request('/v1/learning/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ adapter: 'coding' }) })
     expect(sink.counters['saip_learning_jobs_queued_total']).toBe(1)
   })
 
   it('Review-Focus #6: throwing sink never breaks job acceptance', async () => {
-    const ctx = (await createApp({ security: { dev_mode: true }, adapters, registeredStrategies: ['corrective_sft'], monitoring: new Throwing() })) as any
+    const ctx = (await createApp({ storage: new MemoryStorage(), security: { dev_mode: true }, adapters, registeredStrategies: ['corrective_sft'], monitoring: new Throwing() })) as any
     const res = await ctx.learningApi.app.request('/v1/learning/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ adapter: 'coding' }) })
     expect(res.status).toBe(202)
   })

@@ -142,6 +142,51 @@ storage:
     endpoint: "${SAIP_R2_ENDPOINT}"
 ```
 
+Both values carry the `:-` empty default in the committed file (`bucket: "${SAIP_R2_BUCKET:-}"`)
+so config-loading commands stay readable offline. An empty value is *not* a load-time failure;
+the provider decides what empty means — see [Storage selection](#storage-selection).
+
+### Storage selection
+
+Both gateways get their `StorageProvider` from one shared factory, `storageProviderFor()` in
+`@saip/shared/storage`. Selection is **fail-closed**: the only way to end up with an
+in-memory store is to ask for it by name.
+
+| `SAIP_STORAGE` | `storage.r2.bucket` | Result |
+|---|---|---|
+| unset | non-empty | `R2StorageProvider`, credentials resolved **by name** (`SAIP_R2_ACCESS_KEY_ID`, `SAIP_R2_SECRET_ACCESS_KEY`) |
+| unset | empty or unset | **startup error naming `SAIP_R2_BUCKET`** — never a fallback |
+| `memory` | any | `MemoryStorage`, announced by the boot line `storage: EXPLICIT MEMORY — data dies at restart` |
+
+```bash
+SAIP_STORAGE=memory saip inference    # explicit opt-in; the default is R2 or a hard failure
+```
+
+The failure on an empty bucket is deliberately about the variable rather than the symptom.
+A gateway that boots on a process-lifetime `Map` accepts every write, reports success, and
+loses every document, session and feedback record at restart — so silence there is data
+loss, not degradation. Refusing to start is the cheaper failure, and it is why the silent
+memory default is not reachable by omission.
+
+Credentials reach the provider through `SecretsProvider` (encrypted store first, then the
+shell), so `saip.yaml` holds **names only**. A missing credential fails startup the same way
+an empty bucket does, naming `SAIP_R2_ACCESS_KEY_ID` or `SAIP_R2_SECRET_ACCESS_KEY`.
+
+The client speaks S3 REST directly with AWS Signature V4 computed from `node:crypto`. There
+is **no S3 SDK dependency**, on purpose: four operations do not justify adding the platform's
+first heavy runtime dependency. `list()` requests 1,000 keys per page, merges pages, and sorts
+the union before returning — the bucket layout's corpus is expected to outgrow one page.
+
+The endpoint is not Cloudflare-specific: the client speaks path-style S3, so a local
+S3-compatible server (MinIO, the suite's in-process fake) is a valid value. That is what makes the
+loop runnable with **no cloud account** — the bucket is the only external dependency of the
+learning loop, and any S3 API stands in. Signature V4 region is `auto`, which R2 accepts and most
+S3 servers ignore.
+
+Objects are laid out and indexed under the prefixes in
+[R2 bucket layout](../r2-bucket-layout/); writes there follow the bytes → manifest → index
+order, so a crash leaves an orphan object rather than a dangling index entry.
+
 ### storage.huggingface
 
 | Field       | Type     | Interpolation | Description                                                    |

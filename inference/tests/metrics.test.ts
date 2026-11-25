@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import type { MonitoringProvider } from '@saip/shared'
 import type { VllmBackend, VllmChatRequest, VllmChatResponse } from '../src/lib/backends.js'
 
@@ -20,7 +21,7 @@ const devCfg = async () => ({ ...(await import('../src/lib/config.js')).loadConf
 describe('inference metrics emission', () => {
   it('counts a chat request via the event bridge', async () => {
     const sink = new Counter()
-    const ctx = (await createApp({ config: await devCfg(), vllm: fakeVllm(), monitoring: sink, latestVersion: () => 42 })) as any
+    const ctx = (await createApp({ storage: new MemoryStorage(), config: await devCfg(), vllm: fakeVllm(), monitoring: sink, latestVersion: () => 42 })) as any
     await ctx.server.app.request('/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }) })
     await ctx.sessionCollector.flush()
     expect(sink.counters['saip_chat_requests_total']).toBe(1)
@@ -28,7 +29,7 @@ describe('inference metrics emission', () => {
   })
 
   it('Review-Focus #6: a throwing sink never breaks serving', async () => {
-    const ctx = (await createApp({ config: await devCfg(), vllm: fakeVllm(), monitoring: new Throwing(), latestVersion: () => 42 })) as any
+    const ctx = (await createApp({ storage: new MemoryStorage(), config: await devCfg(), vllm: fakeVllm(), monitoring: new Throwing(), latestVersion: () => 42 })) as any
     const res = await ctx.server.app.request('/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }) })
     expect(res.status).toBe(200) // metrics failed silently; request still served
   })

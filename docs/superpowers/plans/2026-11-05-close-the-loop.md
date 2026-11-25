@@ -64,7 +64,21 @@ export function storageProviderFor(cfg, secrets, env?): Promise<StorageProvider>
 so no existing import site changes; `MemoryStorage` moves to shared beside the contract. New subpath export
 `./storage` is added to `shared/package.json` **only when the file exists** — the #187 manifest rule.
 
+Also corrected during R1: this section assumed the training gateway already resolved
+store → env through `SecretsService` (`training/src/index.ts:36`), so R2 credentials "land without new
+plumbing". It did not — it passed `{ provider: new EnvSecrets() }`, an env-only chain, which would have
+made `SAIP_R2_ACCESS_KEY_ID` unreadable from the encrypted store. Fixed in the same slice.
+
 ### 1.2 R2 implementation — S3 REST + SigV4, no SDK
+
+> **Corrected while implementing R1 (#198).** An earlier draft of this section said the signer could
+> reuse "the `inference/src/lib/s3.ts` plugin already speaking S3 REST with SigV4
+> (`backends.ts:103`)". That plugin does not exist: `backends.ts` is 82 lines, there is no `s3.ts` in any
+> package, and grepping the tree for `SigV4` / `AWS4-HMAC` / `credentialScope` returned nothing. What
+> existed was the *intent*, recorded in a deleted `@aws-sdk/client-s3` dependency (#187 removed it
+> precisely because nothing imported it). The signed request had to be written from scratch, which is
+> why R1's estimate is larger than this section implied. The decision itself is unchanged and was
+> vindicated: four operations do not justify the platform's first heavy runtime dependency.
 
 Cloudflare R2 speaks the S3 API. `R2StorageProvider` implements the four operations against
 `${SAIP_R2_ENDPOINT}/bucket/key` with AWS Signature v4 computed via `node:crypto`
@@ -73,6 +87,11 @@ an SDK (`@aws-sdk/client-s3`) would add the repo's first heavy runtime dependenc
 signer is ~80 lines and fully coverable by a contract fake. Risk: signature bugs. Mitigation is 1.5 — the
 fake asserts the canonical request and a deliberately-corrupted signature **must** be rejected (a detector
 that cannot fail is not a detector).
+
+The mitigation earned its keep. The first working client signed `/bucket/key` while sending
+`//bucket/key` (an extra join slash) — the canonical request and the wire path disagreed, so every call
+403'd. Nothing short of an independent verifier would have caught that from the client's own tests,
+because a fake sharing the signer's helpers validates whatever that helper produces.
 
 `list(prefix)` pages: `GET /?list-type=2&prefix=…&continuation-token=…`, 1000 keys per page (R2/S3 default cap —
 the current `MemoryStorage.list` is correct only because the Map is small), merge pages, sort before returning.
@@ -115,6 +134,10 @@ list-authoritative reads, index rebuild, and concurrent-writer safety remain Epi
 scope; the single-writer-per-prefix invariant above is what makes the MVP safe.
 
 ### 1.5 Test tiers
+
+Landed in R1: `shared/tests/storage-contract.test.ts` runs one suite against `MemoryStorage` and against
+`R2StorageProvider` over `@saip/shared/testing`'s in-process fake; the live-R2 tier remains opt-in and
+tagged, and is still unrun (no bucket configured in this checkout).
 
 One contract suite (`shared/tests/storage-contract.test.ts`) run against three implementations: `MemoryStorage`;
 an in-process **FakeS3** (`node:http`, asserts SigV4 canonical form, paginates at >1,000 seeded keys, returns

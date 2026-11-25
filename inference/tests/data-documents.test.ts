@@ -25,7 +25,11 @@ describe('Data API documents', () => {
     // stored under knowledge/<id>/
     const keys = await storage.list(`knowledge/${body.id}/`)
     expect(keys.some((k) => k.endsWith('manifest.json'))).toBe(true)
-    expect(keys.some((k) => k.endsWith('content.md'))).toBe(true)
+    // #198: the upload and the processor output are separate objects. The old single
+    // `content.md` key held processed text and the raw upload was discarded.
+    expect(keys.some((k) => k.endsWith('source.md'))).toBe(true)
+    expect(keys.some((k) => k.endsWith('processed.md'))).toBe(true)
+    expect(keys.some((k) => k.endsWith('content.md'))).toBe(false)
   })
 
   it('dedups identical content by hash — flagged, no duplicate stored', async () => {

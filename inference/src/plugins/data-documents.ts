@@ -15,7 +15,26 @@ export interface DataDocumentsConfig {
   storage: StorageProvider
 }
 
-interface DocIndexEntry { id: string; source: string; source_type: string; hash: string; size_bytes: number; processed_by: string; tags?: string[]; created_at: string }
+/**
+ * Index entry for one knowledge document.
+ *
+ * `source_key` / `processed_key` are new in #198: the raw upload and the processor output are
+ * separate objects, so re-processing after a processor change (#199) has something to re-process.
+ * Both are optional because entries written before #198 name neither — `contentKeys()` resolves
+ * those through the legacy `content<ext>` fallback rather than requiring a migration.
+ */
+interface DocIndexEntry {
+  id: string
+  source: string
+  source_type: string
+  hash: string
+  size_bytes: number
+  processed_by: string
+  tags?: string[]
+  created_at: string
+  source_key?: string
+  processed_key?: string
+}
 
 const MAX_BYTES = 10 * 1024 * 1024 // 10 MB text guard (MVP)
 
@@ -54,6 +73,23 @@ export class DataDocumentsService extends Service {
     } catch { /* ignore */ }
     return { documents: {} }
   }
+  /**
+   * Where a document's bytes live. New entries name their keys; entries written before #198 only
+   * ever had `content<ext>`, so the legacy object is returned for both roles — the processed text
+   * is all that survives, and pretending otherwise would be a migration this issue does not need.
+   */
+  async contentKeys(id: string): Promise<{ source: string; processed: string } | undefined> {
+    const index = await this.readIndex()
+    const entry = index.documents[id]
+    if (!entry) return undefined
+    if (entry.source_key && entry.processed_key) return { source: entry.source_key, processed: entry.processed_key }
+    // No keys recorded: list the prefix, which works whatever extension the source had.
+    const objects = (await this.cfg.storage.list(`knowledge/${id}/`))
+      .filter((k) => !k.endsWith('manifest.json') && !k.endsWith('_index.json'))
+    const legacy = objects.find((k) => k.includes('/content.')) ?? objects[0]
+    return legacy ? { source: legacy, processed: legacy } : undefined
+  }
+
   private async writeIndex(idx: { documents: Record<string, DocIndexEntry> }) {
     await this.cfg.storage.put('knowledge/_index.json', JSON.stringify(idx, null, 2))
   }
@@ -94,7 +130,17 @@ export class DataDocumentsService extends Service {
     const contentExt = meta.ext ?? '.txt'
     const entry: DocIndexEntry = { id, source, source_type, hash, size_bytes: Buffer.byteLength(content, 'utf8'), processed_by: processed.processedBy, tags, created_at: new Date().toISOString() }
 
-    await this.cfg.storage.put(`knowledge/${id}/content${contentExt}`, processed.intermediate)
+    // `content<ext>` held the *processed* text and the upload itself was discarded, which made the
+    // corpus a one-shot artifact: any change to a processor invalidated every document with nothing
+    // left to re-run. Source bytes and processed bytes now live apart and are both named (#198).
+    const sourceKey = `knowledge/${id}/source${contentExt}`
+    const processedKey = `knowledge/${id}/processed.md`
+    entry.source_key = sourceKey
+    entry.processed_key = processedKey
+    // Bytes → manifest → index (§1.4). A crash between these leaves an orphan object, never an
+    // index entry pointing at bytes that were never written.
+    await this.cfg.storage.put(sourceKey, content)
+    await this.cfg.storage.put(processedKey, processed.intermediate)
     await this.cfg.storage.put(`knowledge/${id}/manifest.json`, JSON.stringify(entry, null, 2))
     index.documents[id] = entry
     await this.writeIndex(index)
