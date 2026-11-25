@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Context } from 'cordis'
+import { MemoryStorage } from '@saip/shared'
 import { LearningApiService } from '../src/plugins/learning-api.js'
 import type { AdapterDefinition } from '@saip/shared'
 
@@ -15,6 +16,7 @@ const composite = (name: string): AdapterDefinition => ({
 async function boot() {
   const ctx = new Context() as any
   await ctx.plugin(LearningApiService as any, {
+    storage: new MemoryStorage(),
     adapters: [leaf('northstar-project'), composite('agent')],
     registeredStrategies: ['corrective_sft'],
     defaultAdapterFor: () => 'northstar-project',
@@ -34,7 +36,15 @@ describe('Learning API HTTP contract', () => {
     const body = await res.json()
     expect(body.adapter).toBe('northstar-project')
     expect(body.strategy).toBe('corrective_sft')
-    expect(body.inherited.data_scopes).toEqual(['sessions', 'feedback'])
+    // #197a: the response IS the persisted record, so `inherited` carries the booleans from
+    // ResolvedJob (`training/src/lib/job-linkage.ts`) rather than re-reporting the scope list, and
+    // the linkage fields appear at the top level. The old body was a fourth shape invented in the
+    // handler; the record says persistence must not invent one.
+    expect(body.inherited).toEqual({ strategy: true, data_scopes: true })
+    expect(body.data_scopes).toEqual(['sessions', 'feedback'])
+    expect(body.strategy).toBe('corrective_sft')
+    expect(body.id).toMatch(/^train-\d{8}-[0-9a-z]+-[0-9a-z]{4}$/)
+    expect(body.status).toBe('queued')
     expect(body.status).toBe('queued')
   })
 
