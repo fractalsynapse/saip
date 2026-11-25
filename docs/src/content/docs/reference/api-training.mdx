@@ -35,9 +35,9 @@ The SAIP platform separates concerns across two gateways with **R2 as the handof
 │                             │          │                             │
 │  Data API (/v1/data/*)      │          │  Learning API (/v1/learning)│
 │  Document Processors        │          │  Training Strategy Plugins  │
-│  ├─ markdown-processor      │          │  ├─ knowledge-embedding     │
-│  ├─ code-processor          │          │  ├─ corrective-sft          │
-│  ├─ pdf-processor (Marker)  │          │  ├─ weighted-kto            │
+│  ├─ markdown-processor      │          │  ├─ knowledge_embedding     │
+│  ├─ code-processor          │          │  ├─ corrective_sft          │
+│  ├─ pdf-processor (Marker)  │          │  ├─ weighted_kto            │
 │  └─ jsonl-processor         │          │  └─ (future strategies...) │
 │                             │          │                             │
 │  Writes processed data ──────────► R2 ◄──── Reads processed data    │
@@ -64,9 +64,9 @@ The training gateway orchestrates the flow:
 
 ```
 R2 (processed data) ──→ Training Strategy Plugins
-                         ├── knowledge-embedding → completion datasets
-                         ├── corrective-sft      → feedback-weighted SFT datasets
-                         ├── weighted-kto        → KTO datasets with magnitude weights
+                         ├── knowledge_embedding → completion datasets
+                         ├── corrective_sft      → feedback-weighted SFT datasets
+                         ├── weighted_kto        → KTO datasets with magnitude weights
                          └── ...extensible
                                 ↓
                           Axolotl Runner
