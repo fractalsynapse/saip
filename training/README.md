@@ -63,6 +63,59 @@ implements: "read processed data from R2 → produce Axolotl dataset." Adding a 
 requires only one new plugin — zero changes to existing code. Document processing is handled
 entirely by the inference gateway.
 
+#### The plugin contract, as implemented
+
+A strategy declares three things, and the registry uses all three:
+
+```ts
+interface TrainingStrategyPlugin {
+  readonly name: string            // canonical snake_case, matched against an adapter's `training.strategy`
+  readonly consumes: ScopeKind[]   // which resolved scopes it reads: sessions | feedback | documents | library
+  readonly format: string          // the Axolotl dataset format it emits, recorded in the job manifest
+  build(input: StrategyInput): StrategyRow[]
+}
+```
+
+`POST /v1/learning/jobs` accepts a strategy only if a plugin with that name is registered in this
+gateway. The list is not a config value: `registeredStrategies` defaults to what `createApp()`
+actually installs, so a strategy that resolves at the API but cannot produce a dataset is a test
+failure rather than a job that fails at 3am on a rented GPU.
+
+#### `corrective_sft`: what a row is, and what is not a row
+
+Feedback records carry `session_id`, `message_id`, `reward ∈ [-3, 3]` and `confidence` — the join is
+on those real keys, never on positions or timestamps:
+
+```json
+{ "role": "assistant", "content": "…", "weight": 0.667, "label": "corrected",
+  "provenance": { "session_id": "sess-1", "message_id": "m-4" } }
+```
+
+- `weight = |reward| / 3`, so the strongest correction and the strongest confirmation carry the same
+  magnitude and the label carries the sign.
+- `confidence` is read but deliberately **not** applied to the weight. Scaling loss by a self-reported
+  0–1 figure would make the dataset depend on an uncalibrated number, invisibly in the bytes; the
+  determinism guarantee below is worth more than a plausible heuristic. A later strategy that earns
+  it can use it.
+- `label = reward > 0 ? "correct" : "corrected"`.
+- **A message with no feedback is context only.** It may appear in the conversation window, but it is
+  never weighted and never a target. This is the "situated experience carries the ground truth" rule
+  from the learning-loop explanation, expressed as a join: without it, every sentence the model ever
+  produced becomes training signal for whatever the user happened to reply to.
+
+#### Determinism is a contract, not a hope
+
+Two exports over identical storage must produce **byte-identical** JSONL. Concretely: rows sorted by
+`(created_at, id)` before serialization, keys inside each row in a fixed order, no timestamps or
+map-iteration order in the bytes, and the manifest recording `sha256` plus `records`. The suite proves
+the comparison actually compares by exporting a deliberately unordered set and asserting the hashes
+differ — a hash that can never differ is not a check.
+
+The dataset lands at `jobs/<id>/dataset/corrective_sft.jsonl` in storage. The `training-data` volume
+mirror (`/app/data/jobs/<id>/`) is written only when `SAIP_TRAINING_DATA_DIR` names a directory: the
+worker sees a volume, the gateway sees whatever it mounted, and inventing a path in code would be a
+claim with no artifact behind it.
+
 ### Adapter Registry Linkage
 
 Every leaf adapter in the `saip.yaml` registry declares its training linkage — `strategy` plus

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `corrective_sft` strategy plugin (`plugins/strategy-corrective-sft.ts`), the strategy contract (`lib/strategy.ts`), and `exportDataset()` (`lib/dataset-export.ts`) with byte-determinism plus a canary that proves the comparison bites. The composition root installs the plugin, and the API's accepted strategy list is derived from what is installed (#196b).
+
 - `POST /v1/learning/jobs` resolves the job's scopes before accepting, refusing with a structured `422` (`empty_scope` / `unknown_scope` / `library_not_found`) and writing the refusal as a `failed` record — no event, no materialized config, no silent zero-record dataset (#196).
 
 ### Changed
