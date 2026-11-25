@@ -231,7 +231,7 @@ Submit a document for processing. The registered document processor plugins hand
 |---------------|-------------------------------------|----------|--------------------------------------------|
 | `source`      | `string`                            | Yes      | Origin URI or description.                 |
 | `source_type` | `'document' \| 'repository' \| 'dataset'` | Yes | Source classification.              |
-| `content`     | `string`                            | Yes      | Raw document content.                      |
+| `content`     | `string`                            | Yes      | Raw document content. Stored verbatim under `source_key`; the processor's output goes to `processed_key`. |
 | `license`     | `string`                            | No       | SPDX license identifier.                   |
 | `tags`        | `string[]`                          | No       | Classification tags.                       |
 
@@ -245,6 +245,8 @@ Submit a document for processing. The registered document processor plugins hand
   "hash": "sha256:a1b2c3...",
   "size_bytes": 4096,
   "processed_by": "markdown-processor",
+  "source_key": "knowledge/doc-20250115-001/source.md",
+  "processed_key": "knowledge/doc-20250115-001/processed.md",
   "created_at": "2025-01-15T10:30:00Z"
 }
 ```
