@@ -12,6 +12,7 @@ import { BearerTokenAuth, MemoryStorage, AllowAllDevAuth, MetricsService, loadYa
   type AuthProvider, type MonitoringProvider, type SecretsProvider, type StorageConfig, type StorageProvider } from '@saip/shared'
 import { LearningApiService } from './plugins/learning-api.js'
 import { CorrectiveSftService, asPlugin } from './plugins/strategy-corrective-sft.js'
+import { AxolotlRunnerService } from './plugins/axolotl-runner.js'
 import type { TrainingStrategyPlugin } from './lib/strategy.js'
 import { createMiddleware } from 'hono/factory'
 
@@ -23,6 +24,10 @@ export interface SecurityConfig {
 /** The slice of `saip.yaml` the training gateway reads for storage selection. */
 export interface TrainingConfig {
   storage?: StorageConfig
+  /** Profile-resolved training block, used as the floor for a generated Axolotl config. */
+  training?: Record<string, unknown>
+  /** Registry-wide LoRA defaults (rank, alpha, target modules). */
+  adapter?: { default_rank?: number; default_alpha?: number; target_modules?: string[] }
 }
 
 export interface CreateAppOptions {
@@ -141,6 +146,18 @@ export async function createApp(opts: CreateAppOptions = {}) {
     // store answers. Starting anyway would let a second job claim the same GPU.
     throw new Error(`refusing to start: ${(e as Error).message} (jobs/ must be reconciled before queueing work)`)
   }
+
+  // The runner is installed but does not start itself: on a single card, training and serving are
+  // time-shared through `saip awake`/`saip sleep`, so a gateway that grabbed the GPU on boot would
+  // fight the engine. An operator (or the hardware tier) calls runNext() when the card is theirs.
+  await ctx.plugin(AxolotlRunnerService, {
+    storage,
+    adapters: opts.adapters,
+    config: fileConfig ?? {},
+    dataDir: (opts.env ?? process.env).SAIP_TRAINING_DATA_DIR,
+    outputDir: (opts.env ?? process.env).SAIP_ADAPTER_OUTPUT_DIR,
+    strategies: plugins,
+  })
 
   // Monitoring bridge: count queued learning jobs. Observe-only.
   ctx.on('learning/job-queued', () => (ctx as any).metrics.counter('saip_learning_jobs_queued_total'))

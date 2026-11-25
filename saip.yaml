@@ -115,6 +115,11 @@ adapters:
   - name: coding
     scope: domain
     description: "Software engineering behaviors"
+    # The checkpoint Axolotl TRAINS against, deliberately not `model.base`: serving needs the
+    # community AWQ build because 4-bit weights fit this card, while bf16 LoRA trains on the original
+    # (QLoRA on this model is discouraged upstream and out of the MVP — see hardware-profiles).
+    # reference/configuration.md#base-on-a-leaf-adapter (#196/#197)
+    base: "Qwen/Qwen3.5-4B"
     training:
       strategy: corrective_sft
       data_scopes: [sessions, feedback]
