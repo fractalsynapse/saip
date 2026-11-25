@@ -146,6 +146,24 @@ export class JobStore {
   }
 
   /**
+   * Update artifact fields without claiming a status change.
+   *
+   * A stage that *produced* something (a dataset hash, a config hash) is not a lifecycle transition:
+   * appending a second `running` entry would make history mean "things happened" instead of "the job
+   * changed state", and anyone reading a record twice-running would reasonably ask which run.
+   */
+  async annotate(id: string, patch: Partial<LearningJobRecord>): Promise<LearningJobRecord | undefined> {
+    const current = await this.get(id)
+    if (!current) return undefined
+    const next: LearningJobRecord = { ...current, ...patch, updated_at: new Date().toISOString() }
+    await this.storage.put(this.key(id), JSON.stringify(next, null, 2))
+    const index = await this.readIndex()
+    if (index.jobs[id]) index.jobs[id] = this.summary(next)
+    await this.writeIndex(index)
+    return next
+  }
+
+  /**
    * Boot-time sweep: a record still marked `running` belongs to a process that is not here.
    *
    * Design record §2.4 chooses *interrupted, not resurrected*. Re-adopting an unknown worker state

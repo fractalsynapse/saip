@@ -160,6 +160,44 @@ adapter/promoted        — adapter passed evaluation, uploaded to R2
 All strategies consume processed data from R2 (written by the inference gateway) and produce QLoRA
 adapters that are uploaded back to R2 for the inference gateway to serve.
 
+### From job record to adapter: what runs, in order
+
+`POST /v1/learning/jobs` only persists a record. Execution is claimed by the runner, and each stage
+writes its output before the next one reads it, so a job can be resumed by hand and audited after the
+fact:
+
+| Stage | Output | Failure code |
+|-------|--------|--------------|
+| P1 scope resolution | member keys (at queue time, see the Learning API) | `empty_scope`, `unknown_scope`, `library_not_found` |
+| P2–P3 dataset export | `jobs/<id>/dataset/<strategy>.jsonl` + manifest | `no_dataset_rows` |
+| P4 config materialization | `jobs/<id>/axolotl.yaml`, mirrored to `<data-dir>/jobs/<id>/` | `no_base_model`, `config_failed` |
+| P5 execution | `docker exec axolotl-worker axolotl train /app/data/jobs/<id>/axolotl.yaml` | `worker_unavailable`, `training_failed` |
+| P6 validation | `adapter_config.json` + `adapter_model.safetensors` present and non-zero | `no_artifact` |
+| P7 promotion | `adapters/<name>/v<N>/` + index (see #198b) | `promotion_failed` |
+
+**Precedence for the generated Axolotl config** (later wins): the `training:` block of the active
+service profile in `saip.yaml` → the `adapter:` block (rank, alpha, target modules) → the leaf
+adapter's `base` checkpoint → the job's own `params`. The output paths point at the volume mirror, and
+the Hugging Face token is referenced **by name** (`SAIP_HF_TOKEN`) and injected into the worker's
+environment at execution — it never appears in the stored YAML bytes. A scan test asserts that no
+configured secret value appears in the dataset, the config, or the job record.
+
+**Why the runner shells out instead of polling a marker.** A previous design had the worker notice a
+file and report back through another file. That is a second, invisible state machine between two
+processes: the API would believe one thing while the worker believed another, and the disagreement
+would surface as a job stuck in `running`. Here the API process owns the lifecycle, runs
+`docker exec`, and treats the exit code as the verdict — a worker that exits 0 having written nothing
+is `no_artifact`, not success.
+
+**The API process never holds the GPU.** The worker's `deploy.resources.reservations` in
+`docker-compose.yml` is the only reservation, and on a single card training and serving are
+time-shared via `saip awake` / `saip sleep`, never run concurrently.
+
+Because `docker exec` requires the daemon, the runner runs where the socket is reachable: a
+host-run gateway in development (the supported MVP path). Inside the container it reports
+`worker_unavailable` rather than guessing — mounting the Docker socket into the training API was
+rejected, as it would hand that container root-equivalent control of the host.
+
 ### Background Processing
 
 Training runs as a background process. The Learning API accepts job requests and manages the

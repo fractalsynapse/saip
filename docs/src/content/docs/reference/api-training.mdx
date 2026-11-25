@@ -179,6 +179,28 @@ the API (`422 forbidden_param`) is the same stance `saip deploy` takes: the valu
 SAIP state, so there is nothing to sanitize later.
 :::
 
+## Job Failure Codes
+
+`error.code` on a record is stable and machine-readable; the runner writes it, never a free-text
+message alone.
+
+| Code | Stage | Meaning |
+|------|-------|---------|
+| `interrupted` | boot | The record said `running` when the gateway started. It is not resumed; re-run as a new job. |
+| `empty_scope` | P1 | A declared scope resolved to zero records. Refused at the API before the job is queued. |
+| `unknown_scope` | P1 | A `data_scopes` entry is not one of the known scope names. |
+| `library_not_found` | P1 | `library:<name>` has no materialized manifest. |
+| `no_dataset_rows` | P3 | Rows resolved but nothing carried feedback. |
+| `no_base_model` | P4 | The target leaf adapter declares no `base` checkpoint. |
+| `config_failed` | P4 | The Axolotl config could not be materialized. |
+| `worker_unavailable` | P5 | The `axolotl-worker` container is not reachable from this process. |
+| `training_failed` | P5 | Non-zero exit; the captured tail lands in `history[].detail`. |
+| `no_artifact` | P6 | The worker exited 0 but wrote no `adapter_config.json` + `adapter_model.safetensors`. |
+| `promotion_failed` | P7 | Upload or read-back verification failed; the previous `latest` stays valid. |
+
+Every transition appends to `history`, so a job that failed twice for different reasons shows both
+attempts rather than only the last.
+
 ## Scope Resolution
 
 `data_scopes` is inherited from the adapter definition (the request offers no override, which is why
