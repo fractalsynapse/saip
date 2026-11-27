@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Added
+- `testing/namespaced.ts` (subpath `./testing`): `NamespacedStorage`, a prefix-scoped view over any provider — reads, deletes and listings translate in both directions, plus `clear()` for teardown. Written because the first draft of the live tier wrapped only `put()`, so every read addressed an un-namespaced key and the suite could not pass when enabled (#198).
+- `tests/live-r2.test.ts`: the design record §1.5 live tier. Runs the same contract suite as the fakes against a real bucket, opt-in via `LIVE_R2_*`, and reports **skipped with the missing variable names** rather than passing silently. Those variables are deliberately not `SAIP_*` prefixed: `tools/vitest/env-isolation.ts` deletes every `SAIP_` variable so suites stay hermetic (#138), which a credential tier must opt out of explicitly (#198).
+
 - `AdapterIndex` now describes the promoted-lineage shape (`{ adapters: { name: { latest, versions } } }`) with `AdapterLineage` and `AdapterVersionEntry`; the `aliases` field is gone because `@latest` is derived (#198b).
 
 - `scopes.ts`: `resolveScopes()` turning `data_scopes` into concrete member keys over the storage seam, with `selectKnowledgeObject()` as the single object-preference rule both gateways use (#196).

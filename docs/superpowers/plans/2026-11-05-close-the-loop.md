@@ -136,8 +136,13 @@ scope; the single-writer-per-prefix invariant above is what makes the MVP safe.
 ### 1.5 Test tiers
 
 Landed in R1: `shared/tests/storage-contract.test.ts` runs one suite against `MemoryStorage` and against
-`R2StorageProvider` over `@saip/shared/testing`'s in-process fake; the live-R2 tier remains opt-in and
-tagged, and is still unrun (no bucket configured in this checkout).
+`R2StorageProvider` over `@saip/shared/testing`'s in-process fake. The live tier is
+`shared/tests/live-r2.test.ts`, driven by the **same** exported suite
+(`tests/helpers/storage-contract.ts`) through `NamespacedStorage`, so the real endpoint is held to the
+identical assertions rather than a shorter copy. It opts in through `LIVE_R2_*` — not `SAIP_R2_*` —
+because env isolation deletes the `SAIP_` namespace from every vitest worker, and a credential tier
+has to step outside that deliberately. When unset it reports *skipped* with the missing names; it has
+not been run against a real bucket, so §1.5's live rung remains outstanding.
 
 One contract suite (`shared/tests/storage-contract.test.ts`) run against three implementations: `MemoryStorage`;
 an in-process **FakeS3** (`node:http`, asserts SigV4 canonical form, paginates at >1,000 seeded keys, returns

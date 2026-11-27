@@ -26,7 +26,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "live-r2": "vitest run tests/live-r2.test.ts"
   },
   "dependencies": {
     "cordis": "^4.0.0-rc.11",
