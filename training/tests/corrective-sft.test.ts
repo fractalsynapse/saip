@@ -139,9 +139,14 @@ describe('dataset export', () => {
   it('mirrors to the training-data directory when one is configured', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'saip-data-'))
     const out = await exportDataset({ job: job(), storage, strategies: [await pluginFor()], mirrorDir: dir })
-    const mirrored = readFileSync(join(dir, 'train-20261125-test-0001', 'dataset', 'corrective_sft.jsonl'), 'utf8')
+    // Asserted through the returned path and the workspace helper rather than a literal: the earlier
+    // version hardcoded <dir>/<id>/… and passed while the worker was told /app/data/jobs/<id>/…
+    // (#197b). The layout lives in one place now, so the test reads from it too.
+    const { hostPath } = await import('../src/lib/workspace.js')
+    expect(out.mirror).toBe(hostPath(dir, 'train-20261125-test-0001', 'dataset/corrective_sft.jsonl'))
+    const mirrored = readFileSync(out.mirror!, 'utf8')
     expect(mirrored).toBe(await storage.get(out.key))
-    expect(readdirSync(join(dir, 'train-20261125-test-0001'))).toContain('dataset')
+    expect(readdirSync(join(dir, 'jobs', 'train-20261125-test-0001'))).toContain('dataset')
   })
 
   it('writes no mirror when no directory is configured — no invented path', async () => {

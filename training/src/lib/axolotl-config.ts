@@ -21,6 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stringify } from 'yaml'
 import type { AdapterDefinition, LearningJobRecord, StorageProvider } from '@saip/shared'
+import { containerPath, hostPath, jobRelPath } from './workspace.js'
 
 export interface AxolotlConfigInput {
   job: LearningJobRecord
@@ -46,11 +47,12 @@ export class AxolotlConfigError extends Error {
 
 /** Relative path of the dataset inside the job workspace — the same layout exportDataset writes. */
 export function datasetPathInWorkspace(jobId: string, strategy: string): string {
-  return `jobs/${jobId}/dataset/${strategy}.jsonl`
+  return `${jobRelPath(jobId)}/dataset/${strategy}.jsonl`
 }
 
 export function buildAxolotlConfig(input: AxolotlConfigInput): string {
   const { job, adapter, config } = input
+  // Host directory that backs the worker's /app/data. Default matches the compose mount.
   const dataDir = input.dataDir ?? '/app/data'
 
   if (!adapter.base) {
@@ -72,7 +74,7 @@ export function buildAxolotlConfig(input: AxolotlConfigInput): string {
     base_model: adapter.base,
     adapter: 'lora',
     dataset: `${dataDir.replace(/\/$/, '')}/${datasetPathInWorkspace(job.id, job.strategy)}`,
-    output_dir: `${dataDir.replace(/\/$/, '')}/jobs/${job.id}/output`,
+    output_dir: containerPath(job.id, 'output'),
     ...(training.precision ? { bf16: training.precision === 'bf16', fp16: training.precision === 'fp16' } : {}),
     ...(training.sequence_len !== undefined ? { sequence_len: training.sequence_len } : {}),
     ...(training.gradient_checkpointing !== undefined ? { gradient_checkpointing: training.gradient_checkpointing } : {}),
@@ -102,13 +104,13 @@ export async function materializeConfig(opts: AxolotlConfigInput & {
   mirrorDir?: string
 }): Promise<MaterializeResult> {
   const body = buildAxolotlConfig(opts)
-  const key = `jobs/${opts.job.id}/axolotl.yaml`
+  const key = `${jobRelPath(opts.job.id)}/axolotl.yaml`
   const sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
   await opts.storage.put(key, body)
 
   let mirror: string | undefined
   if (opts.mirrorDir) {
-    const dir = join(opts.mirrorDir, opts.job.id)
+    const dir = hostPath(opts.mirrorDir, opts.job.id, '').replace(/\/$/, '')
     mkdirSync(dir, { recursive: true })
     mirror = join(dir, 'axolotl.yaml')
     writeFileSync(mirror, body, 'utf8')

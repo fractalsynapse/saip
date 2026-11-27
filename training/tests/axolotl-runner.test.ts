@@ -74,7 +74,7 @@ describe('P4 config materialization', () => {
     const stored = await storage.get(`jobs/${job().id}/axolotl.yaml`)
     expect(stored).toBeTruthy()
     expect(out.sha256).toMatch(/^[0-9a-f]{64}$/)
-    const mirrored = require('node:fs').readFileSync(join(dir, job().id, 'axolotl.yaml'), 'utf8')
+    const mirrored = require('node:fs').readFileSync(join(dir, 'jobs', job().id, 'axolotl.yaml'), 'utf8')
     expect(mirrored).toBe(stored)
   })
 })
@@ -188,6 +188,41 @@ describe('P5/P6 runner lifecycle', () => {
     expect(rec.artifact).toMatchObject({ base_model: 'Qwen/Qwen3.5-4B' })
     expect(rec.dataset?.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(rec.config?.sha256).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('the volume and the worker agree on the layout (#197b)', () => {
+  it('a mirrored file is exactly where the container path points', async () => {
+    const { containerPath, hostPath, CONTAINER_DATA_ROOT } = await import('../src/lib/workspace.js')
+    const dataDir = mkdtempSync(join(tmpdir(), 'saip-ws-'))
+    const id = 'train-20261125-ws-0001'
+
+    const storage: StorageProvider = new MemoryStorage()
+    await storage.put('sessions/s1/conversation.jsonl', '{"role":"assistant","content":"x","id":"m1","created_at":"2026-01-01T00:00:00Z"}\n')
+    await storage.put('feedback/f1.json', JSON.stringify({ id: 'f1', session_id: 's1', message_id: 'm1', reward: -2, created_at: '2026-01-02T00:00:00Z' }))
+    const { exportDataset } = await import('../src/lib/dataset-export.js')
+    const { CorrectiveSftService } = await import('../src/plugins/strategy-corrective-sft.js')
+    const ctx = new Context()
+    await ctx.plugin(CorrectiveSftService, {})
+
+    const dataset = await exportDataset({
+      job: job({ id }), storage, strategies: [(ctx as any).correctiveSft], mirrorDir: dataDir,
+    })
+    const cfg = await materializeConfig({
+      job: job({ id }), adapter: adapters[0], config: profileConfig, storage, mirrorDir: dataDir,
+    })
+
+    // The bug this pins: the gateway wrote <dataDir>/<id>/… while the runner told the worker
+    // /app/data/jobs/<id>/…  — training could never open its own config.
+    expect(existsSync(dataset.mirror!)).toBe(true)
+    expect(existsSync(cfg.mirror!)).toBe(true)
+    expect(dataset.mirror!.startsWith(join(dataDir, 'jobs', id))).toBe(true)
+    const containerConfig = containerPath(id, 'axolotl.yaml')
+    expect(containerConfig.startsWith(CONTAINER_DATA_ROOT)).toBe(true)
+    expect(hostPath(dataDir, id, 'axolotl.yaml')).toBe(cfg.mirror)
+    // A docker shim resolving the container path against the host must land on the mirrored file.
+    const resolved = containerConfig.replace(CONTAINER_DATA_ROOT, dataDir)
+    expect(existsSync(resolved)).toBe(true)
   })
 })
 

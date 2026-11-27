@@ -74,7 +74,7 @@ describe('training composition root installs the pipeline', () => {
     // and mirrored into the volume directory the worker would mount.
     expect(record.dataset?.sha256).toMatch(/^[0-9a-z]{64}$/)
     expect(record.config?.sha256).toMatch(/^[0-9a-z]{64}$/)
-    expect(readdirSync(join(dataDir, id))).toEqual(expect.arrayContaining(['axolotl.yaml', 'dataset']))
+    expect(readdirSync(join(dataDir, 'jobs', id))).toEqual(expect.arrayContaining(['axolotl.yaml', 'dataset']))
   })
 
   it('a runner installed with no data dir still refuses to invent a path it cannot verify', async () => {

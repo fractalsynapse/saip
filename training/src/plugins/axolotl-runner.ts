@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import type { AdapterDefinition, LearningJobRecord, StorageProvider } from '@saip/shared'
 import { JobStore } from '../lib/job-store.js'
 import { materializeConfig } from '../lib/axolotl-config.js'
+import { containerPath } from '../lib/workspace.js'
 import { exportDataset } from '../lib/dataset-export.js'
 import type { TrainingStrategyPlugin } from '../lib/strategy.js'
 import { CorrectiveSftService, asPlugin } from './strategy-corrective-sft.js'
@@ -80,7 +81,7 @@ export class AxolotlRunnerService extends Service {
 
   /** Path inside the worker container, which mounts dataDir as /app/data. */
   private containerConfigPath(jobId: string): string {
-    return `/app/data/jobs/${jobId}/axolotl.yaml`
+    return containerPath(jobId, 'axolotl.yaml')
   }
 
   /**

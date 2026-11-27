@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { LearningJobRecord, StorageProvider } from '@saip/shared'
 import { canonicalRow, compareRows, findStrategy, type TrainingStrategyPlugin } from './strategy.js'
+import { hostPath, jobRelPath } from './workspace.js'
 
 export interface DatasetExportResult {
   /** Storage key of the JSONL body. */
@@ -52,8 +53,10 @@ export async function exportDataset(opts: DatasetExportOptions): Promise<Dataset
   const body = ordered.map(canonicalRow).join('\n') + '\n'
 
   const sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
-  const key = `jobs/${opts.job.id}/dataset/${plugin.name}.jsonl`
-  const manifestKey = `jobs/${opts.job.id}/dataset/manifest.json`
+  // Same relative location in the bucket as on the volume — one shape, two roots.
+  const rel = `${jobRelPath(opts.job.id)}/dataset`
+  const key = `${rel}/${plugin.name}.jsonl`
+  const manifestKey = `${rel}/manifest.json`
 
   // Bytes first, then the manifest naming them (§1.4 ordering): an index entry for a dataset that
   // was never written is the dangling-reference failure this project keeps having to design out.
@@ -70,7 +73,7 @@ export async function exportDataset(opts: DatasetExportOptions): Promise<Dataset
     // what the comment in training/docker-compose.yml has promised since it was written; nothing
     // implemented it until now, and only when an operator names the directory — inventing a default
     // path would be a claim with no artifact behind it.
-    const dir = join(opts.mirrorDir, opts.job.id, 'dataset')
+    const dir = hostPath(opts.mirrorDir, opts.job.id, 'dataset')
     mkdirSync(dir, { recursive: true })
     const path = join(dir, `${plugin.name}.jsonl`)
     writeFileSync(path, body, 'utf8')
