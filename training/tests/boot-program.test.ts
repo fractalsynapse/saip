@@ -34,15 +34,26 @@ function assertBuilt(): void {
   if (stale.length) throw new Error(`dist/ is older than ${stale.map((f) => basename(f)).join(', ')} — rebuild before testing the program`)
 }
 
-function run(env: Record<string, string>, ms = 15_000): Promise<{ code: number | null; out: string }> {
+/**
+ * Start the built gateway and collect output.
+ *
+ * `until` stops the process once the expected line appears: since #218 the gateway is a server, so
+ * waiting for a natural exit would hang any test that boots it successfully. Exit codes are still
+ * asserted for the refusal paths, which do exit.
+ */
+function run(env: Record<string, string>, until?: (out: string) => boolean, ms = 15_000): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [entry], {
       cwd: repoRoot,
       env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
     })
     let out = ''
-    child.stdout.on('data', (c) => { out += c.toString() })
-    child.stderr.on('data', (c) => { out += c.toString() })
+    const collect = (c: Buffer): void => {
+      out += c.toString()
+      if (until?.(out)) child.kill('SIGTERM')
+    }
+    child.stdout.on('data', collect)
+    child.stderr.on('data', collect)
     const timer = setTimeout(() => child.kill('SIGKILL'), ms)
     child.on('exit', (code) => { clearTimeout(timer); resolve({ code, out }) })
   })
@@ -69,9 +80,15 @@ describe('saip training: storage is fail-closed at this root too', () => {
       SAIP_ENV_FILE: join(tmp(), 'missing.env'),
       SAIP_SECRETS_FILE: join(tmp(), 'secrets.enc.json'),
       SAIP_STORAGE: 'memory',
-    })
+      SAIP_TRAINING_PORT: String(8600 + Math.floor(Math.random() * 300)),
+    // Stop only once the port is bound — the last line the entry point prints. Terminating on the
+    // storage summary would kill the process before the line asserted below was ever written, which
+    // is how this test failed while the gateway was behaving correctly.
+    }, (out) => /Learning API listening on :\d+/.test(out))
     expect(r.out).toMatch(/EXPLICIT MEMORY — job records die at restart/)
-    expect(r.out).toMatch(/Gateway starting/)
+    // The old entry point printed "Gateway starting..." and exited 0 without binding anything.
+    // Since #218 the honest signal is a bound port (#218), so that is what is asserted here.
+    expect(r.out).toMatch(/Learning API listening on :\d+/)
   })
 
   it('names the R2 provider at boot and echoes no credential', async () => {
@@ -83,7 +100,8 @@ describe('saip training: storage is fail-closed at this root too', () => {
       SAIP_R2_ENDPOINT: 'http://127.0.0.1:1',
       SAIP_R2_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
       SAIP_R2_SECRET_ACCESS_KEY: 'super-secret-value-should-never-print',
-    })
+      SAIP_TRAINING_PORT: String(8600 + Math.floor(Math.random() * 300)),
+    }, (out) => out.includes('Listening on') || out.includes('storage: R2StorageProvider'))
     expect(r.out).toMatch(/storage: R2StorageProvider/)
     expect(r.out).not.toContain('super-secret-value-should-never-print')
     expect(r.out).not.toContain('AKIAIOSFODNN7EXAMPLE')
@@ -101,6 +119,7 @@ describe('saip training: storage is fail-closed at this root too', () => {
       SAIP_R2_ENDPOINT: 'http://127.0.0.1:1',
       SAIP_R2_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
       SAIP_R2_SECRET_ACCESS_KEY: 'super-secret-value-should-never-print',
+      SAIP_TRAINING_PORT: String(8600 + Math.floor(Math.random() * 300)),
     })
     expect(r.code).toBe(2)
     expect(r.out).toMatch(/refusing to start/)
