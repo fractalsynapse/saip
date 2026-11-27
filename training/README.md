@@ -217,6 +217,27 @@ services:
   # Future: evaluation service, dataset preprocessing, etc.
 ```
 
+## The loop, run as a program
+
+`pnpm --filter @saip/training loop-e2e` (after `pnpm -r build`) executes the whole learning loop against
+an in-process S3-shaped endpoint, with **no GPU, no cloud credentials and no network sidecar**:
+
+```
+seed session + feedback  →  queue corrective_sft  →  export dataset + materialize config
+  →  execute worker (a `docker` shim on PATH)  →  validate artifact  →  promote v1  →  index
+  →  restart the inference gateway  →  coding@latest resolves v1 from the bucket
+  →  queue again  →  promote v2, latest=2, v1 retained
+```
+
+It is not a substitute for the unit suites — it is the only check that the two gateways agree. It
+exists because a test that builds one app in-process cannot see a path, key name, or index shape
+disagreement between services, and it has already caught two: the mirror/layout mismatch in
+`lib/workspace.ts`, and the training gateway exiting 0 without ever binding its port (#218).
+
+The `docker` shim is deliberate. The runner's entire contract with the worker is a command line, an
+exit code, and an output directory, so a shim exercises the same boundary; if the runner ever passes a
+path the worker cannot read, the shim fails and the job lands in `training_failed`.
+
 ## Configuration
 
 Service-specific settings live under the `training:` key in `saip.yaml`. See
