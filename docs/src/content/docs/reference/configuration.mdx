@@ -237,6 +237,33 @@ adapters:
         - { adapter: northstar-project, weight: 1.0 }
 ```
 
+### `base` on a leaf adapter
+
+A leaf that is trained must name the checkpoint the adapter was trained **against**:
+
+```yaml
+  - name: coding
+    scope: domain
+    training:
+      strategy: corrective_sft
+      data_scopes: [sessions, feedback]
+    base: "Qwen/Qwen3.5-4B"
+```
+
+This is not the same value as `model.base`. `model.base` is what the **engine loads** (the
+`QuantTrio/Qwen3.5-4B-AWQ` community build, because serving needs 4-bit weights on this hardware);
+`base` on an adapter is what **Axolotl trains** (the bf16 original — an AWQ checkpoint cannot be
+LoRA-trained in bf16, and QLoRA is deliberately out of the MVP).
+
+The pair is intentional and both halves are recorded: a promoted adapter's manifest keeps the base it
+was validated against, and vLLM applies bf16-trained LoRA deltas to the quantized checkpoint. The
+served combination is the one in [hardware profiles](/saip/reference/hardware-profiles/), where AWQ +
+multi-LoRA is described as the supported path.
+
+A leaf with no `base` cannot be materialized into an Axolotl config: config generation fails with a
+structured error naming the adapter rather than falling back to `model.base`, because "we assumed the
+serving checkpoint was also the training checkpoint" is exactly the inference this field exists to
+make explicit.
 ## users
 
 Array of user-to-adapter mappings. Each entry binds a user ID to specific adapters for inference and training. Names resolve through the adapter registry — `inference` may reference a composite.
