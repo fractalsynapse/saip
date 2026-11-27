@@ -9,7 +9,7 @@
 import { Context } from 'cordis'
 import { AdapterRegistryService, SecretsService } from '@saip/shared/services'
 import { BearerTokenAuth, MemoryStorage, AllowAllDevAuth, MetricsService, loadYamlConfig, storageProviderFor, defaultSecretsProvider,
-  type AuthProvider, type MonitoringProvider, type SecretsProvider, type StorageConfig, type StorageProvider } from '@saip/shared'
+  type AuthProvider, type AdapterDefinition, type MonitoringProvider, type SecretsProvider, type StorageConfig, type StorageProvider } from '@saip/shared'
 import { LearningApiService } from './plugins/learning-api.js'
 import { CorrectiveSftService, asPlugin } from './plugins/strategy-corrective-sft.js'
 import { AxolotlRunnerService } from './plugins/axolotl-runner.js'
@@ -23,13 +23,29 @@ export interface SecurityConfig {
   api_tokens?: Array<{ caller: string; token_secret: string }>
 }
 
-/** The slice of `saip.yaml` the training gateway reads for storage selection. */
+/** The slice of `saip.yaml` the training gateway reads. */
 export interface TrainingConfig {
   storage?: StorageConfig
+  /**
+   * Auth policy, read like the inference gateway reads it. Before #218 this was not in the config
+   * type at all: `createApp()` used `opts.security ?? { dev_mode: false, api_tokens: [] }`, so a
+   * deployed gateway — which passes no options — always ended up with an empty token list and
+   * answered 401 to every request, including one carrying a valid bearer. The documented routes
+   * were unreachable in production even once something was listening.
+   */
+  security?: SecurityConfig
   /** Profile-resolved training block, used as the floor for a generated Axolotl config. */
   training?: Record<string, unknown>
   /** Registry-wide LoRA defaults (rank, alpha, target modules). */
   adapter?: { default_rank?: number; default_alpha?: number; target_modules?: string[] }
+  /**
+   * Adapter registry as declared in `saip.yaml`. Neither this nor `opts.adapters` was supplied by the
+   * entry point, so the shipped gateway booted with an empty registry and every job request answered
+   * `404 adapter_not_found`, whatever the file declared (#218).
+   */
+  adapters?: AdapterDefinition[]
+  /** Caller → adapter assignment, the source of the inherited default training adapter. */
+  users?: Array<{ id: string; adapters: { inference?: string; training?: string } }>
 }
 
 export interface CreateAppOptions {
@@ -48,6 +64,8 @@ export interface CreateAppOptions {
   security?: SecurityConfig
   adapters?: any[]
   registeredStrategies?: string[]
+  /** Overrides `saip.yaml` users; used by tests. */
+  users?: Array<{ id: string; adapters: { inference?: string; training?: string } }>
   defaultAdapterFor?: (callerId?: string) => string | undefined
   monitoring?: MonitoringProvider
 }
@@ -112,7 +130,9 @@ export async function createApp(opts: CreateAppOptions = {}) {
 
   process.stderr.write(`[saip-training] ${storageSummary(storage)}\n`)
 
-  const security = opts.security ?? { dev_mode: false, api_tokens: [] }
+  // Config first, then an explicit argument: the entry point supplies no options, so reading only
+  // `opts.security` left every deployed instance with zero accepted tokens.
+  const security = fileConfig?.security ?? opts.security ?? { dev_mode: false, api_tokens: [] }
   const provider = pickAuthProvider(security, (ctx as any).secrets)
   const authMiddleware = createMiddleware(async (c: any, next: any) => {
     const principal = await provider.verifyApi({ headers: { authorization: c.req.header('authorization') ?? c.req.header('Authorization') } })
@@ -128,12 +148,28 @@ export async function createApp(opts: CreateAppOptions = {}) {
   await ctx.plugin(CorrectiveSftService)
   const plugins: TrainingStrategyPlugin[] = [asPlugin((ctx as any).correctiveSft)]
 
+  const registryAdapters = opts.adapters ?? fileConfig?.adapters ?? []
+  const registryUsers = opts.users ?? fileConfig?.users ?? []
+
+  // The entry point passed neither, so the shipped gateway booted with an empty registry:
+  // GET /v1/learning/strategies answered `[]` and every POST /v1/learning/jobs was
+  // `404 adapter_not_found`, whatever saip.yaml declared (#218).
+  const validation = (ctx as any).adapterRegistry.validate({ adapters: registryAdapters, users: registryUsers })
+  if (!validation.valid) {
+    throw new Error(`invalid adapter registry: ${validation.errors.map((e: any) => `${e.code}@${e.path}`).join(', ')}`)
+  }
+
+  // A caller with no explicit adapter trains the one their user entry names; requiring the request
+  // body to repeat a mapping that already exists in config is how inheritance bugs get written down twice.
+  const defaultAdapterFor = opts.defaultAdapterFor ?? ((callerId?: string) =>
+    callerId ? registryUsers.find((u) => u.id === callerId)?.adapters.training : undefined)
+
   await ctx.plugin(LearningApiService, {
     storage,
-    adapters: opts.adapters,
+    adapters: registryAdapters,
     strategies: plugins,
     ...(opts.registeredStrategies ? { registeredStrategies: opts.registeredStrategies } : {}),
-    defaultAdapterFor: opts.defaultAdapterFor,
+    defaultAdapterFor,
     authMiddleware,
   })
 
@@ -154,7 +190,7 @@ export async function createApp(opts: CreateAppOptions = {}) {
   // fight the engine. An operator (or the hardware tier) calls runNext() when the card is theirs.
   await ctx.plugin(AxolotlRunnerService, {
     storage,
-    adapters: opts.adapters,
+    adapters: registryAdapters,
     config: fileConfig ?? {},
     dataDir: (opts.env ?? process.env).SAIP_TRAINING_DATA_DIR,
     outputDir: (opts.env ?? process.env).SAIP_ADAPTER_OUTPUT_DIR,

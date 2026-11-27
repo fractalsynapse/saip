@@ -34,14 +34,14 @@ export class TrainingServerService extends Service {
   // made the whole service unresolvable wherever that peer had not been installed.
   static readonly inject = ['learningApi'] as const
   readonly app = new Hono()
-  private readonly ctx: Record<string, any>
+  private readonly owner: Record<string, any>
   private server?: ServerType
   private timer?: NodeJS.Timeout
   private mounted = false
 
   constructor(ctx: any, cfg: TrainingServerConfig = {}) {
     super(ctx, 'trainingServer')
-    this.ctx = ctx as Record<string, any>
+    this.owner = ctx as Record<string, any>
     void cfg
 
     // Health first: an orchestrator needs to distinguish "container up" from "service answering",
@@ -61,7 +61,7 @@ export class TrainingServerService extends Service {
   private mount(): void {
     if (this.mounted) return
     this.mounted = true
-    const api = this.ctx.learningApi?.app
+    const api = this.owner.learningApi?.app
     if (api) this.app.route('/', api)
   }
 
