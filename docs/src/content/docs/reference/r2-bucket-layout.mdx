@@ -11,10 +11,11 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 <bucket>/
 ├── adapters/
 │   ├── _index.json
-│   └── <adapter-id>/
-│       ├── adapter_config.json
-│       ├── adapter_model.safetensors
-│       └── manifest.json
+│   └── <adapter-name>/
+│       └── v<N>/
+│           ├── adapter_config.json
+│           ├── adapter_model.safetensors
+│           └── manifest.json
 ├── knowledge/
 │   ├── _index.json
 │   └── <knowledge-id>/
@@ -48,25 +49,53 @@ Stores trained LoRA adapter weights and metadata.
 Composite user adapters are stored here like any other adapter — a single compiled artifact per version (`adapter_config.json` + `adapter_model.safetensors`). The difference is in the manifest: composites carry a `composition` provenance record listing each component's resolved version, weight, and the overall gain. See [Adapter Definitions](/saip/reference/adapter-definitions/) for compile semantics.
 :::
 
+### adapters/\<name\>/v\<N\>/
+
+One directory per **promoted version** of a named adapter lineage. `N` is zero-padded to six digits
+(`v000042`), the same form the engine-facing adapter id uses (`general@000042`), so a prefix listing of
+`adapters/general/` comes back in promotion order instead of lexicographic confusion between `v10` and
+`v2`. Immutable once written: `N` never changes, and a rollback is a pointer move in the index rather
+than an edit to bytes.
+
 ### adapters/_index.json
 
-Global adapter registry. See [Adapter Manifest](/saip/reference/adapter-manifest/) for the full schema.
+The commit point for promotion, and the only object the serving side reads. Written **last**, after
+every artifact has been uploaded and read back — so a partial upload leaves the previous version
+serving instead of pointing at bytes that do not exist.
 
-| Field      | Type                                | Description                                         |
-|------------|-------------------------------------|-----------------------------------------------------|
-| `adapters` | `Record<string, AdapterManifest>`  | Map of adapter ID → manifest.                       |
-| `aliases`  | `Record<string, string>`           | Alias → canonical ID (e.g. `"general@latest"` → `"general@000042"`). |
-| `updated_at` | `string` (ISO 8601)              | Last modification timestamp.                        |
+| Field | Type | Description |
+|-------|------|-------------|
+| `adapters` | `Record<string, AdapterLineage>` | Map of adapter **name** → its lineage. |
+| `adapters[name].latest` | `number` | Highest promoted version for that name. `@latest` resolves here. |
+| `adapters[name].versions` | `Record<string, AdapterVersionEntry>` | Version number as a string key → `{ job_id, base_model, trained_at, records }`. |
+| `updated_at` | `string` (ISO 8601) | Last modification timestamp. |
 
-### adapters/\<id\>/adapter_config.json
+```json
+{ "adapters": { "coding": { "latest": 3, "versions": {
+    "3": { "job_id": "train-20261125-lx3k9q-4f2a", "base_model": "Qwen/Qwen3.5-4B",
+           "trained_at": "2026-11-25T12:41:19Z", "records": 412 } } } },
+  "updated_at": "2026-11-25T12:41:20Z" }
+```
+
+:::note[Shape change in #198b]
+Earlier revisions of this page — and the `AdapterIndex` type in `@saip/shared` — described `adapters`
+as a map of canonical **ID** → full manifest, with a separate `aliases` map turning
+`"general@latest"` into `"general@000042"`. That put two objects in charge of one fact: a promotion
+had to write the version record *and* move an alias, and a crash between the two left `@latest`
+pointing at missing bytes. The lineage shape above holds the pointer and the versions together, so the
+index write is the single commit point. The serving reader was rewritten to match: `@latest` is
+derived from `latest`, never stored.
+:::
+
+### adapters/\<name\>/v\<N\>/adapter_config.json
 
 HuggingFace PEFT adapter configuration. Standard `peft` library format containing rank, alpha, target modules, task type, and base model reference.
 
-### adapters/\<id\>/adapter_model.safetensors
+### adapters/\<name\>/v\<N\>/adapter_model.safetensors
 
 LoRA weight file in safetensors format. Contains only the low-rank delta matrices, not the full base model.
 
-### adapters/\<id\>/manifest.json
+### adapters/\<name\>/v\<N\>/manifest.json
 
 [`AdapterManifest`](/saip/reference/adapter-manifest/) JSON document with training provenance, version, and metrics.
 

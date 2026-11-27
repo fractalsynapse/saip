@@ -13,6 +13,7 @@ import { BearerTokenAuth, MemoryStorage, AllowAllDevAuth, MetricsService, loadYa
 import { LearningApiService } from './plugins/learning-api.js'
 import { CorrectiveSftService, asPlugin } from './plugins/strategy-corrective-sft.js'
 import { AxolotlRunnerService } from './plugins/axolotl-runner.js'
+import { R2SyncService } from './plugins/r2-sync.js'
 import type { TrainingStrategyPlugin } from './lib/strategy.js'
 import { createMiddleware } from 'hono/factory'
 
@@ -157,6 +158,23 @@ export async function createApp(opts: CreateAppOptions = {}) {
     dataDir: (opts.env ?? process.env).SAIP_TRAINING_DATA_DIR,
     outputDir: (opts.env ?? process.env).SAIP_ADAPTER_OUTPUT_DIR,
     strategies: plugins,
+  })
+
+  // P7: promotion consumes the runner's event, so the loop closes through storage rather than a
+  // caller remembering to invoke it. A failed promotion is written to the job record: an adapter
+  // that trained but never reached the bucket must be visible as failed, not as succeeded.
+  await ctx.plugin(R2SyncService, { storage })
+  ctx.on('learning/adapter-trained', (payload: { adapter: string; job_id: string; path: string }) => {
+    void (ctx as any).r2Sync
+      .promote({ adapter: payload.adapter, job_id: payload.job_id, path: payload.path })
+      // A version assignment is not a status change — the job already succeeded — so it is recorded
+      // with annotate rather than appending a second `succeeded` row to history.
+      .then((r: { version: number }) => (ctx as any).learningApi.store.annotate(payload.job_id, { version: r.version }))
+      .catch(async (e: Error) => {
+        await (ctx as any).learningApi.store.transition(payload.job_id, 'failed', {
+          error: { code: (e as { code?: string }).code ?? 'promotion_failed', message: e.message },
+        }, e.message)
+      })
   })
 
   // Monitoring bridge: count queued learning jobs. Observe-only.

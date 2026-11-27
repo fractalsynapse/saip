@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Added
+- `plugins/r2-sync.ts` (#198b): `promote()` (upload → read-back verify → manifest → index last) and `rollback(name, version)`, wired to `learning/adapter-trained` by the composition root, with the assigned version recorded on the job and a failed promotion marking the job `failed`.
+
 - `lib/axolotl-config.ts`, `lib/secret-scan.ts`, `plugins/axolotl-runner.ts`: P4–P6 of the pipeline — config materialization with documented precedence, a single-flight runner over `docker exec` with `worker_unavailable` / `training_failed` / `no_artifact`, and a scan of dataset/config/record bytes against real secret values. Installed by `createApp()`; the runner does not start itself, because awake/sleep decides when the card is theirs (#197b).
 
 - `corrective_sft` strategy plugin (`plugins/strategy-corrective-sft.ts`), the strategy contract (`lib/strategy.ts`), and `exportDataset()` (`lib/dataset-export.ts`) with byte-determinism plus a canary that proves the comparison bites. The composition root installs the plugin, and the API's accepted strategy list is derived from what is installed (#196b).
