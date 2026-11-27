@@ -189,7 +189,8 @@ Written only by the training gateway. A job is a single flat object rather than 
 because the record is read whole by every consumer (the runner, `r2Sync`, an operator asking
 "what happened"), and unlike documents it has no large payload beside it — the dataset and the
 Axolotl config it produces live at `jobs/<id>/dataset/…` and `jobs/<id>/axolotl.yaml` once those
-stages land (#196, #197).
+stages land (#197b). The dataset side is implemented now: `jobs/<id>/dataset/<strategy>.jsonl` holds
+the exported rows and `jobs/<id>/dataset/manifest.json` records `sha256`, `records` and `format`.
 
 ### jobs/_index.json
 

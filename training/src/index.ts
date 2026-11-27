@@ -11,6 +11,8 @@ import { AdapterRegistryService, SecretsService } from '@saip/shared/services'
 import { BearerTokenAuth, MemoryStorage, AllowAllDevAuth, MetricsService, loadYamlConfig, storageProviderFor, defaultSecretsProvider,
   type AuthProvider, type MonitoringProvider, type SecretsProvider, type StorageConfig, type StorageProvider } from '@saip/shared'
 import { LearningApiService } from './plugins/learning-api.js'
+import { CorrectiveSftService, asPlugin } from './plugins/strategy-corrective-sft.js'
+import type { TrainingStrategyPlugin } from './lib/strategy.js'
 import { createMiddleware } from 'hono/factory'
 
 export interface SecurityConfig {
@@ -73,6 +75,13 @@ function pickAuthProvider(security: SecurityConfig, secrets: any): AuthProvider 
   return new BearerTokenAuth(security.api_tokens ?? [], secrets)
 }
 
+export { exportDataset } from './lib/dataset-export.js'
+export type { DatasetExportOptions, DatasetExportResult } from './lib/dataset-export.js'
+export { CorrectiveSftService } from './plugins/strategy-corrective-sft.js'
+export { canonicalRow, compareRows, findStrategy } from './lib/strategy.js'
+export type { StrategyRow, StrategyInput, TrainingStrategyPlugin } from './lib/strategy.js'
+export { JobStore, newJobId, findSecretParam } from './lib/job-store.js'
+export type { JobListQuery, JobListResult } from './lib/job-store.js'
 export async function createApp(opts: CreateAppOptions = {}) {
   const ctx = new Context()
   await ctx.plugin(AdapterRegistryService)
@@ -105,10 +114,18 @@ export async function createApp(opts: CreateAppOptions = {}) {
     await next()
   })
 
+  // Strategy plugins are installed here, at the root, so the API's accepted list is a fact about
+  // this build rather than a string in a config file (#196b). `knowledge_embedding` and
+  // `weighted_kto` are deliberately absent: the MVP loop closes through `corrective_sft`, and
+  // registering a name with no plugin behind it is the defect this replaces.
+  await ctx.plugin(CorrectiveSftService)
+  const plugins: TrainingStrategyPlugin[] = [asPlugin((ctx as any).correctiveSft)]
+
   await ctx.plugin(LearningApiService, {
     storage,
     adapters: opts.adapters,
-    registeredStrategies: opts.registeredStrategies,
+    strategies: plugins,
+    ...(opts.registeredStrategies ? { registeredStrategies: opts.registeredStrategies } : {}),
     defaultAdapterFor: opts.defaultAdapterFor,
     authMiddleware,
   })

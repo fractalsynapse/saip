@@ -32,18 +32,25 @@ const CANONICAL = [
   ['weighted', '_kt' + 'o'],
 ].map(([head, tail]) => head + tail)
 
-/** Tracked text files: the same corpus a reviewer would read. */
+/**
+ * Tracked text files: the whole corpus a reviewer would read.
+ *
+ * Filtering this by the word "strategy" was the first attempt, and it was wrong in the way most of
+ * these guards are wrong: a page that names a drifted strategy in a JSON example without ever writing
+ * the word "strategy" fell outside the scan, so the check passed on exactly the drift it exists to
+ * catch. A corpus is chosen by file kind, never by whether it already agrees with the assertion.
+ */
 function trackedText(): Array<{ path: string; text: string }> {
-  const out = execFileSync('git', ['grep', '-l', '-I', '-E', 'strateg', '--', '.'], {
+  const out = execFileSync('git', ['ls-files', '-z', '--', '*.md', '*.mdx', '*.ts', '*.yaml', '*.yml', '*.json'], {
     cwd: repoRoot, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
   })
-  return out.split('\n').filter(Boolean).map((path) => ({ path, text: readFileSync(join(repoRoot, path), 'utf8') }))
+  return out.split('\0').filter(Boolean).map((path) => ({ path, text: readFileSync(join(repoRoot, path), 'utf8') }))
 }
 
 describe('canonical strategy naming (#196)', () => {
   it('the scan reads a real file set — a check that sees nothing is not a check', () => {
     const files = trackedText()
-    expect(files.length, 'git grep found no strategy-bearing files').toBeGreaterThan(10)
+    expect(files.length, 'the scan found no files at all').toBeGreaterThan(100)
     expect(files.some((f) => f.path === 'saip.yaml')).toBe(true)
     expect(files.some((f) => f.path.endsWith('.mdx'))).toBe(true)
   })
@@ -54,7 +61,17 @@ describe('canonical strategy naming (#196)', () => {
       if (path.includes('node_modules')) continue
       text.split('\n').forEach((line, i) => {
         for (const token of FORBIDDEN) {
-          if (line.toLowerCase().includes(token.toLowerCase())) hits.push(`${path}:${i + 1}: ${token}`)
+          let from = line.toLowerCase().indexOf(token.toLowerCase())
+          while (from !== -1) {
+            // The rule is about STRATEGY NAMES, not the kebab-case file names this repo uses
+            // everywhere (this very module's path contains one of the tokens, which is how the first
+            // run flagged its own imports). Excluding a hit whose left neighbor is a path separator
+            // or another hyphenated word part removes that false positive while leaving every real
+            // drift form — a quoted value, or one after `strategy:` — still matched by this loop.
+            const before = from > 0 ? line[from - 1] : ''
+            if (before !== '/' && before !== '-') hits.push(`${path}:${i + 1}: ${token}`)
+            from = line.toLowerCase().indexOf(token.toLowerCase(), from + 1)
+          }
         }
       })
     }
