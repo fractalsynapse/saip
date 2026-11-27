@@ -11,14 +11,17 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 <bucket>/
 ├── adapters/
 │   ├── _index.json
-│   └── <adapter-id>/
-│       ├── adapter_config.json
-│       ├── adapter_model.safetensors
-│       └── manifest.json
+│   └── <adapter-name>/
+│       └── v<N>/
+│           ├── adapter_config.json
+│           ├── adapter_model.safetensors
+│           └── manifest.json
 ├── knowledge/
 │   ├── _index.json
 │   └── <knowledge-id>/
-│       ├── content.<ext>
+│       ├── source.<ext>          # original upload bytes
+│       ├── processed.md          # processor intermediate text
+│       ├── content.<ext>         # legacy: pre-#198 processed text
 │       └── manifest.json
 ├── sessions/
 │   ├── _index.json
@@ -27,9 +30,15 @@ SAIP uses a single Cloudflare R2 bucket (configured via `storage.r2` in `saip.ya
 │       ├── artifacts/
 │       │   └── <artifact-files>
 │       └── manifest.json
-└── feedback/
+├── feedback/
+│   ├── _index.json
+│   └── <feedback-id>.json
+├── jobs/
+│   ├── _index.json
+│   └── <job-id>.json
+└── libraries/
     ├── _index.json
-    └── <feedback-id>.json
+    └── <name>/manifest.json
 ```
 
 ## adapters/
@@ -40,31 +49,59 @@ Stores trained LoRA adapter weights and metadata.
 Composite user adapters are stored here like any other adapter — a single compiled artifact per version (`adapter_config.json` + `adapter_model.safetensors`). The difference is in the manifest: composites carry a `composition` provenance record listing each component's resolved version, weight, and the overall gain. See [Adapter Definitions](/saip/reference/adapter-definitions/) for compile semantics.
 :::
 
+### adapters/\<name\>/v\<N\>/
+
+One directory per **promoted version** of a named adapter lineage. `N` is zero-padded to six digits
+(`v000042`), the same form the engine-facing adapter id uses (`general@000042`), so a prefix listing of
+`adapters/general/` comes back in promotion order instead of lexicographic confusion between `v10` and
+`v2`. Immutable once written: `N` never changes, and a rollback is a pointer move in the index rather
+than an edit to bytes.
+
 ### adapters/_index.json
 
-Global adapter registry. See [Adapter Manifest](/saip/reference/adapter-manifest/) for the full schema.
+The commit point for promotion, and the only object the serving side reads. Written **last**, after
+every artifact has been uploaded and read back — so a partial upload leaves the previous version
+serving instead of pointing at bytes that do not exist.
 
-| Field      | Type                                | Description                                         |
-|------------|-------------------------------------|-----------------------------------------------------|
-| `adapters` | `Record<string, AdapterManifest>`  | Map of adapter ID → manifest.                       |
-| `aliases`  | `Record<string, string>`           | Alias → canonical ID (e.g. `"general@latest"` → `"general@000042"`). |
-| `updated_at` | `string` (ISO 8601)              | Last modification timestamp.                        |
+| Field | Type | Description |
+|-------|------|-------------|
+| `adapters` | `Record<string, AdapterLineage>` | Map of adapter **name** → its lineage. |
+| `adapters[name].latest` | `number` | Highest promoted version for that name. `@latest` resolves here. |
+| `adapters[name].versions` | `Record<string, AdapterVersionEntry>` | Version number as a string key → `{ job_id, base_model, trained_at, records }`. |
+| `updated_at` | `string` (ISO 8601) | Last modification timestamp. |
 
-### adapters/\<id\>/adapter_config.json
+```json
+{ "adapters": { "coding": { "latest": 3, "versions": {
+    "3": { "job_id": "train-20261125-lx3k9q-4f2a", "base_model": "Qwen/Qwen3.5-4B",
+           "trained_at": "2026-11-25T12:41:19Z", "records": 412 } } } },
+  "updated_at": "2026-11-25T12:41:20Z" }
+```
+
+:::note[Shape change in #198b]
+Earlier revisions of this page — and the `AdapterIndex` type in `@saip/shared` — described `adapters`
+as a map of canonical **ID** → full manifest, with a separate `aliases` map turning
+`"general@latest"` into `"general@000042"`. That put two objects in charge of one fact: a promotion
+had to write the version record *and* move an alias, and a crash between the two left `@latest`
+pointing at missing bytes. The lineage shape above holds the pointer and the versions together, so the
+index write is the single commit point. The serving reader was rewritten to match: `@latest` is
+derived from `latest`, never stored.
+:::
+
+### adapters/\<name\>/v\<N\>/adapter_config.json
 
 HuggingFace PEFT adapter configuration. Standard `peft` library format containing rank, alpha, target modules, task type, and base model reference.
 
-### adapters/\<id\>/adapter_model.safetensors
+### adapters/\<name\>/v\<N\>/adapter_model.safetensors
 
 LoRA weight file in safetensors format. Contains only the low-rank delta matrices, not the full base model.
 
-### adapters/\<id\>/manifest.json
+### adapters/\<name\>/v\<N\>/manifest.json
 
 [`AdapterManifest`](/saip/reference/adapter-manifest/) JSON document with training provenance, version, and metrics.
 
 ## knowledge/
 
-Stores ingested knowledge documents used for knowledge-embedding training.
+Stores ingested knowledge documents used for knowledge_embedding training.
 
 ### knowledge/_index.json
 
@@ -73,9 +110,25 @@ Stores ingested knowledge documents used for knowledge-embedding training.
 | `entries`  | `Record<string, KnowledgeManifest>` | Map of knowledge ID → manifest.     |
 | `updated_at` | `string` (ISO 8601)               | Last modification timestamp.        |
 
+### knowledge/\<id\>/source.*
+
+The **original** uploaded bytes, unmodified, under the upload's own extension (`.txt`, `.md`,
+`.json`, `.pdf`, `.png`, …). Preserving raw input is what makes re-processing possible at all:
+a processor fix, a new OCR backend, or a changed chunker is worth nothing if the only bytes on
+disk were produced by the old one. The hash and size in the manifest describe this object.
+
+### knowledge/\<id\>/processed.md
+
+The processor's intermediate text — the Markdown the document pipeline emits, and what
+retrieval and dataset export read. Written after `source.*` and before the index entry
+(bytes → manifest → index), so an index entry never points at bytes that were not stored.
+
 ### knowledge/\<id\>/content.*
 
-The raw knowledge document. Extension varies by source type (`.txt`, `.md`, `.json`, `.pdf`). Content hash is recorded in the manifest.
+**Legacy key, still read.** Before #198 the processed text was stored *as* `content<ext>` and
+the raw upload was discarded. Entries whose manifest names `content.*` keep working: readers
+fall back to it, and no re-ingestion migration is required. New writes use `source.*` plus
+`processed.md` and record both keys.
 
 ### knowledge/\<id\>/manifest.json
 
@@ -88,6 +141,8 @@ The raw knowledge document. Extension varies by source type (`.txt`, `.md`, `.js
 | `source_type`| `'document' \| 'repository' \| 'dataset'` | Classification of the source.          |
 | `license`    | `string?`                     | SPDX license identifier.                         |
 | `hash`       | `string`                      | SHA-256 hash of the content file.                |
+| `source_key` | `string?`                     | Storage key of the original upload (`knowledge/<id>/source.<ext>`). Absent on pre-#198 entries. |
+| `processed_key` | `string?`                  | Storage key of the processed text (`knowledge/<id>/processed.md`). Absent on pre-#198 entries, whose readers fall back to `knowledge/<id>/content.<ext>`. |
 | `size_bytes` | `number`                      | Content file size in bytes.                      |
 | `created_at` | `string` (ISO 8601)           | Creation timestamp.                              |
 | `updated_at` | `string` (ISO 8601)           | Last update timestamp.                           |
@@ -156,6 +211,56 @@ Stores human or automated feedback records linked to sessions, used for weighted
 | `dimensions`    | `Record<string, number>?` | Multi-dimensional reward breakdown.                   |
 | `feedback_text` | `string?`                 | Free-form human commentary.                           |
 | `created_at`    | `string` (ISO 8601)       | Record creation timestamp.                            |
+
+## jobs/
+
+Written only by the training gateway. A job is a single flat object rather than a directory
+because the record is read whole by every consumer (the runner, `r2Sync`, an operator asking
+"what happened"), and unlike documents it has no large payload beside it — the dataset and the
+Axolotl config it produces live at `jobs/<id>/dataset/…` and `jobs/<id>/axolotl.yaml` once those
+stages land (#197b). The dataset side is implemented now: `jobs/<id>/dataset/<strategy>.jsonl` holds
+the exported rows and `jobs/<id>/dataset/manifest.json` records `sha256`, `records` and `format`.
+
+### jobs/_index.json
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jobs` | `Record<string, JobSummary>` | Map of job id → `{ status, adapter, strategy, created_at, updated_at }`. |
+| `updated_at` | `string` (ISO 8601) | Last modification timestamp. |
+
+### jobs/\<id\>.json
+
+The [`LearningJobRecord`](/saip/reference/api-training/#the-job-record) — status, linkage,
+dataset/config/artifact references, and the append-only `history` of transitions.
+
+**Single writer.** Only the training gateway mutates `jobs/`. Reads come from anywhere; the
+inference gateway never writes a job it did not create. This invariant is what makes the MVP's
+"index is not authoritative until list-authoritative reads land" safe rather than optimistic.
+
+## libraries/
+
+Saved selectors over `knowledge/`, declared in [`libraries:` config](/saip/reference/configuration/#libraries).
+A library is a **view**: the document objects themselves stay under `knowledge/`, and nothing is
+copied here — only which member keys the filter resolved to.
+
+### libraries/\<name\>/manifest.json
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Library identifier, matching `library:<name>` in `data_scopes`. |
+| `filter` | `object` | The filter that produced this membership, recorded so a reader can see *why* these are the members. |
+| `members` | `string[]` | Knowledge document keys (`knowledge/<id>/…`), sorted. |
+| `count` | `number` | `members.length`, so a resolver can spot an empty library without counting. |
+| `updated_at` | `string` (ISO 8601) | Last materialization. |
+
+### libraries/_index.json
+
+Registry of known libraries with their last materialization, so the Data API can detect a library
+that disappeared from config and prune its manifest.
+
+**Writer:** the inference gateway, on document upload/delete and on config load. **Reader:** the
+training gateway at job scope resolution. A scope that resolves to zero members fails the job
+before any configuration is materialized — training on nothing must not be reachable by typo.
 
 ## Index File Conventions
 

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Context } from 'cordis'
+import { MemoryStorage } from '@saip/shared'
+import { seededStore } from './helpers/corpus.js'
 import { LearningApiService } from '../src/plugins/learning-api.js'
 import type { AdapterDefinition } from '@saip/shared'
 
@@ -15,9 +17,10 @@ const composite = (name: string): AdapterDefinition => ({
 async function boot() {
   const ctx = new Context() as any
   await ctx.plugin(LearningApiService as any, {
-    adapters: [leaf('treeseed-project'), composite('agent')],
+    storage: await seededStore(),
+    adapters: [leaf('northstar-project'), composite('agent')],
     registeredStrategies: ['corrective_sft'],
-    defaultAdapterFor: () => 'treeseed-project',
+    defaultAdapterFor: () => 'northstar-project',
   })
   return ctx.learningApi.app
 }
@@ -28,13 +31,21 @@ describe('Learning API HTTP contract', () => {
     const res = await app.request('/v1/learning/jobs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ adapter: 'treeseed-project' }),
+      body: JSON.stringify({ adapter: 'northstar-project' }),
     })
     expect(res.status).toBe(202)
     const body = await res.json()
-    expect(body.adapter).toBe('treeseed-project')
+    expect(body.adapter).toBe('northstar-project')
     expect(body.strategy).toBe('corrective_sft')
-    expect(body.inherited.data_scopes).toEqual(['sessions', 'feedback'])
+    // #197a: the response IS the persisted record, so `inherited` carries the booleans from
+    // ResolvedJob (`training/src/lib/job-linkage.ts`) rather than re-reporting the scope list, and
+    // the linkage fields appear at the top level. The old body was a fourth shape invented in the
+    // handler; the record says persistence must not invent one.
+    expect(body.inherited).toEqual({ strategy: true, data_scopes: true })
+    expect(body.data_scopes).toEqual(['sessions', 'feedback'])
+    expect(body.strategy).toBe('corrective_sft')
+    expect(body.id).toMatch(/^train-\d{8}-[0-9a-z]+-[0-9a-z]{4}$/)
+    expect(body.status).toBe('queued')
     expect(body.status).toBe('queued')
   })
 

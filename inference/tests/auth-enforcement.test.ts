@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 import type { SaipRuntimeConfig } from '../src/lib/config.js'
 import type { VllmBackend, VllmChatRequest, VllmChatResponse } from '../src/lib/backends.js'
 
@@ -15,7 +16,7 @@ class FakeVllm implements VllmBackend {
 async function bootWith(security: SaipRuntimeConfig['security']) {
   const base = (await import('../src/lib/config.js')).loadConfig(repoConfig)
   const cfg: SaipRuntimeConfig = { ...base, security }
-  const ctx = (await createApp({ config: cfg, vllm: new FakeVllm(), latestVersion: () => 42 })) as any
+  const ctx = (await createApp({ storage: new MemoryStorage(), config: cfg, vllm: new FakeVllm(), latestVersion: () => 42 })) as any
   return ctx.server.app
 }
 

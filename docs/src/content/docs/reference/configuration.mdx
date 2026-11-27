@@ -142,6 +142,51 @@ storage:
     endpoint: "${SAIP_R2_ENDPOINT}"
 ```
 
+Both values carry the `:-` empty default in the committed file (`bucket: "${SAIP_R2_BUCKET:-}"`)
+so config-loading commands stay readable offline. An empty value is *not* a load-time failure;
+the provider decides what empty means — see [Storage selection](#storage-selection).
+
+### Storage selection
+
+Both gateways get their `StorageProvider` from one shared factory, `storageProviderFor()` in
+`@saip/shared/storage`. Selection is **fail-closed**: the only way to end up with an
+in-memory store is to ask for it by name.
+
+| `SAIP_STORAGE` | `storage.r2.bucket` | Result |
+|---|---|---|
+| unset | non-empty | `R2StorageProvider`, credentials resolved **by name** (`SAIP_R2_ACCESS_KEY_ID`, `SAIP_R2_SECRET_ACCESS_KEY`) |
+| unset | empty or unset | **startup error naming `SAIP_R2_BUCKET`** — never a fallback |
+| `memory` | any | `MemoryStorage`, announced by the boot line `storage: EXPLICIT MEMORY — data dies at restart` |
+
+```bash
+SAIP_STORAGE=memory saip inference    # explicit opt-in; the default is R2 or a hard failure
+```
+
+The failure on an empty bucket is deliberately about the variable rather than the symptom.
+A gateway that boots on a process-lifetime `Map` accepts every write, reports success, and
+loses every document, session and feedback record at restart — so silence there is data
+loss, not degradation. Refusing to start is the cheaper failure, and it is why the silent
+memory default is not reachable by omission.
+
+Credentials reach the provider through `SecretsProvider` (encrypted store first, then the
+shell), so `saip.yaml` holds **names only**. A missing credential fails startup the same way
+an empty bucket does, naming `SAIP_R2_ACCESS_KEY_ID` or `SAIP_R2_SECRET_ACCESS_KEY`.
+
+The client speaks S3 REST directly with AWS Signature V4 computed from `node:crypto`. There
+is **no S3 SDK dependency**, on purpose: four operations do not justify adding the platform's
+first heavy runtime dependency. `list()` requests 1,000 keys per page, merges pages, and sorts
+the union before returning — the bucket layout's corpus is expected to outgrow one page.
+
+The endpoint is not Cloudflare-specific: the client speaks path-style S3, so a local
+S3-compatible server (MinIO, the suite's in-process fake) is a valid value. That is what makes the
+loop runnable with **no cloud account** — the bucket is the only external dependency of the
+learning loop, and any S3 API stands in. Signature V4 region is `auto`, which R2 accepts and most
+S3 servers ignore.
+
+Objects are laid out and indexed under the prefixes in
+[R2 bucket layout](../r2-bucket-layout/); writes there follow the bytes → manifest → index
+order, so a crash leaves an orphan object rather than a dangling index entry.
+
 ### storage.huggingface
 
 | Field       | Type     | Interpolation | Description                                                    |
@@ -189,9 +234,36 @@ adapters:
       gain: 1.25
       components:
         - { adapter: coding, weight: 0.7 }
-        - { adapter: treeseed-project, weight: 1.0 }
+        - { adapter: northstar-project, weight: 1.0 }
 ```
 
+### `base` on a leaf adapter
+
+A leaf that is trained must name the checkpoint the adapter was trained **against**:
+
+```yaml
+  - name: coding
+    scope: domain
+    training:
+      strategy: corrective_sft
+      data_scopes: [sessions, feedback]
+    base: "Qwen/Qwen3.5-4B"
+```
+
+This is not the same value as `model.base`. `model.base` is what the **engine loads** (the
+`QuantTrio/Qwen3.5-4B-AWQ` community build, because serving needs 4-bit weights on this hardware);
+`base` on an adapter is what **Axolotl trains** (the bf16 original — an AWQ checkpoint cannot be
+LoRA-trained in bf16, and QLoRA is deliberately out of the MVP).
+
+The pair is intentional and both halves are recorded: a promoted adapter's manifest keeps the base it
+was validated against, and vLLM applies bf16-trained LoRA deltas to the quantized checkpoint. The
+served combination is the one in [hardware profiles](/saip/reference/hardware-profiles/), where AWQ +
+multi-LoRA is described as the supported path.
+
+A leaf with no `base` cannot be materialized into an Axolotl config: config generation fails with a
+structured error naming the adapter rather than falling back to `model.base`, because "we assumed the
+serving checkpoint was also the training checkpoint" is exactly the inference this field exists to
+make explicit.
 ## users
 
 Array of user-to-adapter mappings. Each entry binds a user ID to specific adapters for inference and training. Names resolve through the adapter registry — `inference` may reference a composite.
@@ -209,6 +281,51 @@ users:
       inference: "default-agent@latest"
       training: "general"
 ```
+
+## libraries
+
+A **library** is a saved selector over the knowledge corpus: a name plus a filter, so a training
+job can say `library:onboarding` instead of enumerating document ids that change every time someone
+uploads. It is a *view*, not a copy — the objects stay under `knowledge/` and the library stores only
+which members it resolved to.
+
+```yaml
+libraries:
+  - name: onboarding
+    filter:
+      tags: [wiki, onboarding]
+      source_type: document
+  - name: contracts
+    filter:
+      tags: [legal]
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Library identifier, used as `library:<name>` in `data_scopes`. Unique across the section. |
+| `filter.tags` | `string[]` | No | Match documents carrying **all** listed tags. |
+| `filter.source_type` | `'document' \| 'repository' \| 'dataset'` | No | Match the upload's classification. |
+| `filter.ids` | `string[]` | No | Explicit member ids. Combined with the other clauses by AND. |
+
+Omitting `libraries:` entirely is valid, and every existing `saip.yaml` keeps loading: the section is
+additive, and `data_scopes` values without a `library:` prefix mean what they meant before.
+
+### How a library becomes data
+
+The inference gateway owns the knowledge index, so it is the one that materializes each library as
+`libraries/<name>/manifest.json` — member keys plus the filter that produced them, rewritten when a
+document is added or deleted. Training resolves `library:<name>` by reading that manifest, which
+keeps the writer single and the reader cheap (design record §P1, epic #64 B3).
+
+Because the manifest records the resolved filter, an operator can see *why* a library contains what
+it does, and editing the filter re-materializes rather than duplicating bytes.
+
+### Failure semantics
+
+An unknown `library:<name>`, or one that resolves to zero members, is a **job failure with a
+structured error before any configuration is materialized** — never an empty dataset. Training on
+nothing would silently un-learn behaviors the base model had, which is the worst kind of success:
+`200`, `succeeded`, and a worse adapter. See [Learning API](/saip/reference/api-training/).
 
 ## inference
 
@@ -249,7 +366,7 @@ Each method has an `enabled` boolean and method-specific parameters.
 
 | Field          | Type      | Description                                          |
 |----------------|-----------|------------------------------------------------------|
-| `enabled`      | `boolean` | Enable knowledge-embedding training method.          |
+| `enabled`      | `boolean` | Enable knowledge_embedding training method.          |
 | `sequence_len` | `number`  | Maximum sequence length for embedding training data. |
 
 #### corrective_sft
@@ -331,7 +448,18 @@ Resolution order, highest first:
    overrides anything on disk, and CI or a secrets store can inject without touching files.
 2. **A `.env` file**, loaded with `override: false` so it only fills variables not already set.
    This is what makes native CLI and gateway runs work without exporting anything by hand.
-   Resolved from `--env <path>`, then `$SAIP_ENV_FILE`, then `./.env`; absence is not an error.
+   Resolved by SAIP's own loader — `$SAIP_ENV_FILE` if set, otherwise the nearest existing `./.env`
+   found by walking up from the working directory, otherwise `<cwd>/.env`. Absence is not an error.
+
+   > **The compiled CLI does not load `.env` implicitly** (since 0.7.0, #148). Bun's single-file
+   > executables autoload the current working directory's `.env` by default, which bypassed
+   > `$SAIP_ENV_FILE`, folded a project's secrets into every `saip` invocation made from its directory,
+   > and reported them as shell-provenance. Builds pass `--no-compile-autoload-dotenv`, and CI asserts
+   > it against the artifact with a canary value, so the loader above is the only reader.
+   >
+   > `--env` / `--config` flags do not exist; setting them was never possible. Configuration location is
+   > chosen by environment variables only — see the CLI reference's Global Options note (#149 tracks
+   > implementing or permanently dropping them).
 3. **Docker Compose**, which reads `env_file` for containerized runs and inherits the calling
    shell. Compose performs its own `${VAR}` substitution on the compose file itself; SAIP
    interpolates `saip.yaml` after the process starts, so the two never compete.

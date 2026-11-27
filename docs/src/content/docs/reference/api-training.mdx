@@ -15,6 +15,13 @@ Data ingestion is handled by the inference gateway (see [Inference API](/saip/re
 
 ## Authentication
 
+`/v1/learning/jobs*` is authenticated as a **prefix**. Hono's `app.use('/v1/learning/jobs', mw)`
+matches that exact path and not its subpaths, so adding `GET /v1/learning/jobs/:id` under the old
+pattern would publish every persisted job — adapter, dataset hash, parameters — to anonymous
+readers. The middleware mounts on `/v1/learning/jobs/*`.
+
+## Authentication
+
 Job-mutating routes (`POST /v1/learning/jobs`) are protected by the same pluggable
 [AuthProvider](/saip/reference/security-model/) as the inference gateway: send `Authorization: Bearer <token>`, and the authenticated caller's default training adapter is used unless the request names one explicitly. **Fail-closed** — without a valid bearer token (and with `security.dev_mode` false), requests receive `401`. Read-only routes such as `GET /v1/learning/strategies` may remain open depending on deployment policy.
 
@@ -28,9 +35,9 @@ The SAIP platform separates concerns across two gateways with **R2 as the handof
 │                             │          │                             │
 │  Data API (/v1/data/*)      │          │  Learning API (/v1/learning)│
 │  Document Processors        │          │  Training Strategy Plugins  │
-│  ├─ markdown-processor      │          │  ├─ knowledge-embedding     │
-│  ├─ code-processor          │          │  ├─ corrective-sft          │
-│  ├─ pdf-processor (Marker)  │          │  ├─ weighted-kto            │
+│  ├─ markdown-processor      │          │  ├─ knowledge_embedding     │
+│  ├─ code-processor          │          │  ├─ corrective_sft          │
+│  ├─ pdf-processor (Marker)  │          │  ├─ weighted_kto            │
 │  └─ jsonl-processor         │          │  └─ (future strategies...) │
 │                             │          │                             │
 │  Writes processed data ──────────► R2 ◄──── Reads processed data    │
@@ -57,9 +64,9 @@ The training gateway orchestrates the flow:
 
 ```
 R2 (processed data) ──→ Training Strategy Plugins
-                         ├── knowledge-embedding → completion datasets
-                         ├── corrective-sft      → feedback-weighted SFT datasets
-                         ├── weighted-kto        → KTO datasets with magnitude weights
+                         ├── knowledge_embedding → completion datasets
+                         ├── corrective_sft      → feedback-weighted SFT datasets
+                         ├── weighted_kto        → KTO datasets with magnitude weights
                          └── ...extensible
                                 ↓
                           Axolotl Runner
@@ -114,7 +121,7 @@ Trigger a new training job. Jobs target a **leaf adapter** in the registry; when
 |-----------------|----------|----------|------------------------------------------------------|
 | `adapter`       | `string` | No       | Target adapter name from the registry. Defaults to the caller's `users[].adapters.training`. Must be a leaf — composites return `422`. |
 | `strategy`      | `string` | No       | Registered training strategy plugin. Defaults to the adapter's declared `training.strategy`. |
-| `data_ids`      | `string[]` | No     | Explicit document/session/feedback IDs. Default: all untrained data within the adapter's declared `data_scopes`. |
+| `data_ids`      | `string[]` | No     | Explicit document/session/feedback IDs, ANDed with the adapter's declared `data_scopes`. Matching nothing is `422 empty_scope`, not an empty dataset. |
 | `params`        | `object` | No       | Strategy-specific parameter overrides (defaults merge from the adapter's `training.params`). |
 
 :::note[Adapter → Strategy → Data Path]
@@ -123,23 +130,132 @@ The registry is what makes this chain explicit: `user → users[].adapters.train
 
 ### Response `202 Accepted`
 
+Returns the persisted [job record](#the-job-record). The record is written to
+`jobs/<id>.json` **before** the `learning/job-queued` event is emitted: the event is a
+notification, the object in storage is the truth.
+
 ```json
 {
-  "job_id": "train-20250115-001",
-  "adapter": "treeseed-project",
+  "id": "train-20261125-lx3k9q-4f2a",
+  "caller": "adrian",
+  "adapter": "northstar-project",
   "strategy": "corrective_sft",
-  "inherited": { "data_scopes": ["sessions", "feedback"] },
+  "data_scopes": ["sessions", "feedback"],
+  "params": {},
+  "inherited": { "strategy": true, "data_scopes": true },
   "status": "queued",
-  "created_at": "2025-01-15T12:00:00Z"
+  "history": [{ "at": "2026-11-25T12:00:00Z", "status": "queued" }],
+  "created_at": "2026-11-25T12:00:00Z",
+  "updated_at": "2026-11-25T12:00:00Z"
 }
 ```
 
 ### Errors
 
-| Status | Condition |
-|--------|-----------|
-| `422` | `adapter` names a composite (`trainable: false`) or unknown strategy |
-| `404` | Adapter not found in registry |
+| Status | Code | Condition |
+|--------|------|-----------|
+| `401` | `unauthorized` | No bearer token on any `/v1/learning/jobs*` route when `security.dev_mode` is false |
+| `404` | `adapter_not_found` | Adapter not in the registry |
+| `422` | `composite_not_trainable` | `adapter` names a composite (`trainable: false`) |
+| `422` | `unknown_strategy` | `strategy` is not a registered plugin |
+| `422` | `forbidden_param` | A `params` key matches `token`/`secret`/`key`/`passw` — see the redaction rule below |
+| `422` | `unknown_scope` | An inherited `data_scopes` entry is not `sessions`, `feedback`, `documents` or `library:<name>` |
+| `422` | `library_not_found` | `library:<name>` has no materialized manifest at `libraries/<name>/manifest.json` |
+| `422` | `empty_scope` | A scope resolved to zero records (no sessions, no feedback, an empty library, or `data_ids` that match nothing) |
+
+:::note[A refusal is still a record]
+Queueing resolves the adapter's `data_scopes` against storage **before** accepting the job, so a typo
+in a scope name or an empty corpus is a `422` at the boundary instead of a training run that reports
+success after un-learning behavior. The refusal is still written to `jobs/<id>.json` with
+`status: 'failed'` and the structured error, and it appears in the list routes: an operator asking
+"why is there no job for that attempt" gets an answer. Nothing is emitted on
+`learning/job-queued` for a refused job, and no configuration is materialized.
+:::
+
+:::note[`params` are rejected, not redacted]
+A job record is written to cloud storage, and a wizard-passed credential that arrives as a
+"training parameter" would otherwise be published to the bucket with the dataset. Rejecting at
+the API (`422 forbidden_param`) is the same stance `saip deploy` takes: the value never enters
+SAIP state, so there is nothing to sanitize later.
+:::
+
+## Job Failure Codes
+
+`error.code` on a record is stable and machine-readable; the runner writes it, never a free-text
+message alone.
+
+| Code | Stage | Meaning |
+|------|-------|---------|
+| `interrupted` | boot | The record said `running` when the gateway started. It is not resumed; re-run as a new job. |
+| `empty_scope` | P1 | A declared scope resolved to zero records. Refused at the API before the job is queued. |
+| `unknown_scope` | P1 | A `data_scopes` entry is not one of the known scope names. |
+| `library_not_found` | P1 | `library:<name>` has no materialized manifest. |
+| `no_dataset_rows` | P3 | Rows resolved but nothing carried feedback. |
+| `no_base_model` | P4 | The target leaf adapter declares no `base` checkpoint. |
+| `config_failed` | P4 | The Axolotl config could not be materialized. |
+| `worker_unavailable` | P5 | The `axolotl-worker` container is not reachable from this process. |
+| `training_failed` | P5 | Non-zero exit; the captured tail lands in `history[].detail`. |
+| `no_artifact` | P6 | The worker exited 0 but wrote no `adapter_config.json` + `adapter_model.safetensors`. |
+| `promotion_failed` | P7 | Upload or read-back verification failed; the previous `latest` stays valid. |
+
+Every transition appends to `history`, so a job that failed twice for different reasons shows both
+attempts rather than only the last.
+
+## Scope Resolution
+
+`data_scopes` is inherited from the adapter definition (the request offers no override, which is why
+`inherited.data_scopes` is `true` by construction). At queue time the training gateway resolves each
+entry through the shared `StorageProvider` seam — never a concrete client — so the same code path runs
+against memory in tests, the in-process fake in CI, and R2 in production:
+
+| Scope | Resolves to |
+|---|---|
+| `sessions` | every `sessions/<id>/conversation.jsonl` |
+| `feedback` | every `feedback/<id>.json` |
+| `documents` | one object per knowledge document, preferring `processed.md`, then `source.<ext>`, then the legacy `content.<ext>` |
+| `library:<name>` | the member keys recorded in `libraries/<name>/manifest.json`, verified present |
+
+Libraries are declared in [`libraries:` config](/saip/reference/configuration/#libraries) and
+materialized by the inference gateway, which owns the knowledge index; the manifest records the filter
+that produced it ([bucket layout](/saip/reference/r2-bucket-layout/#librariesnamemanifestjson)).
+
+The first unresolvable scope aborts the request. A partially-resolved dataset is not a thing: silently
+dropping one scope would train on a corpus the operator never chose.
+
+## The Job Record
+
+Every job is one object at `jobs/<id>.json`, plus a `jobs/_index.json` map — the layout documents,
+sessions and feedback already use. No database is introduced: the job store is a `StorageProvider`
+consumer, so the durability rules and the contract suite in
+[Storage selection](/saip/reference/configuration/#storage-selection) apply to it for free. Only
+the training gateway writes here.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | `string` | `train-<YYYYMMDD>-<base36-ms>-<base36-rand4>`. Unique across restarts — the previous counter reset on boot and minted duplicates. |
+| `caller` | `string?` | Authenticated principal, from the existing bearer path |
+| `adapter`, `strategy`, `data_scopes`, `data_ids`, `params` | — | Copied verbatim from the resolved job, which is also what the API already returned; persistence does not invent a second shape |
+| `inherited` | `{ strategy: boolean, data_scopes: boolean }` | Whether each came from the adapter declaration or the request |
+| `status` | `'queued' \| 'running' \| 'succeeded' \| 'failed'` | There is no `completed` state; the runner produces `succeeded` |
+| `error` | `{ code, message }?` | Structured, e.g. `interrupted`, `no_artifact` |
+| `dataset` | `{ key, sha256, records, format }?` | The `sha256` is the determinism proof for the export |
+| `config` | `{ key, sha256 }?` | Materialized `axolotl.yaml` |
+| `artifact` | `{ prefix, base_model }?` | Worker output directory |
+| `version` | `number?` | Assigned **only** at promotion; links back through the adapter index |
+| `history` | `Array<{ at, status, detail? }>` | Append-only transitions, written with every status change |
+| `created_at`, `updated_at` | `string` (ISO 8601) | |
+
+### Lifecycle rules
+
+- **Write-ahead.** `queued` is persisted before `learning/job-queued` fires. A consumer that acts
+  on the event can always read the record it describes.
+- **Single-flight.** One `running` job at a time — one GPU. `queued` jobs are claimed oldest
+  `created_at` first.
+- **Interrupted, not resurrected.** At boot, every `running` record becomes
+  `failed { code: "interrupted" }`. The runner does not resume unknown worker state; a re-run is a
+  new job. This is what makes killing a cloud instance survivable: the record says what happened
+  instead of lying about a process that no longer exists.
+- **Transitions append to `history`** and rewrite the object (bytes → index ordering, as above).
 
 ### Example
 
@@ -147,7 +263,7 @@ The registry is what makes this chain explicit: `user → users[].adapters.train
 # Minimal: inherit strategy + data scopes from the adapter's registry entry
 curl -X POST http://localhost:8001/v1/learning/jobs \
   -H "Content-Type: application/json" \
-  -d '{ "adapter": "treeseed-project" }'
+  -d '{ "adapter": "northstar-project" }'
 
 # Explicit: override strategy params for one experiment
 curl -X POST http://localhost:8001/v1/learning/jobs \
@@ -162,39 +278,50 @@ curl -X POST http://localhost:8001/v1/learning/jobs \
 
 ## GET /v1/learning/jobs
 
-List training jobs.
+List job records. The response mirrors the Data API's document list, so a client that pages one
+pages both.
 
 ### Query Parameters
 
-| Parameter  | Type     | Description                                          |
-|------------|----------|------------------------------------------------------|
-| `status`   | `string` | Filter by status (`queued`, `running`, `completed`, `failed`). |
-| `strategy` | `string` | Filter by training strategy name.                    |
-| `limit`    | `number` | Maximum jobs to return. Default `20`.                |
-| `offset`   | `number` | Pagination offset. Default `0`.                      |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `adapter` | `string` | Filter by target adapter name. |
+| `status` | `string` | Filter by status (`queued`, `running`, `succeeded`, `failed`). |
+| `limit` | `number` | Maximum records to return. Default `50`. |
+| `offset` | `number` | Pagination offset. Default `0`. |
 
 ### Response `200 OK`
 
 ```json
 {
-  "jobs": [
-    {
-      "job_id": "train-20250115-001",
-      "strategy": "knowledge_embedding",
-      "status": "running",
-      "adapter_id": "general",
-      "progress": 0.45,
-      "created_at": "2025-01-15T12:00:00Z",
-      "started_at": "2025-01-15T12:01:00Z"
-    }
+  "entries": [
+    { "id": "train-20261125-lx3k9q-4f2a", "adapter": "coding", "strategy": "corrective_sft", "status": "queued", "created_at": "2026-11-25T12:00:00Z" }
   ],
   "total": 1,
-  "limit": 20,
+  "limit": 50,
   "offset": 0
 }
 ```
 
+## GET /v1/learning/jobs/:id
+
+Fetch one [job record](#the-job-record) by id. This is the route that makes a job queryable after
+the process that queued it is gone, which is the entire point of persisting it.
+
+### Response `200 OK`
+
+The full record.
+
+### Errors
+
+| Status | Code | Condition |
+|--------|------|-----------|
+| `401` | `unauthorized` | Missing bearer token (non-`dev_mode`) |
+| `404` | `job_not_found` | No record at that id |
+
 ## GET /v1/learning/status
+
+> **Not implemented.** No handler exists on the training gateway (#208). This section describes an intended shape, not shipped behavior.
 
 Check the current state of the training subsystem.
 
@@ -216,6 +343,8 @@ Check the current state of the training subsystem.
 ```
 
 ## POST /v1/learning/feedback
+
+> **Not implemented here.** Feedback is written through the inference Data API (`POST /v1/data/feedback`); whether this route should also exist on the training gateway is open in #208.
 
 Submit a feedback record linked to a session. Used as reward signal for weighted KTO and corrective SFT training strategies.
 
@@ -256,6 +385,8 @@ curl -X POST http://localhost:8001/v1/learning/feedback \
 ```
 
 ## GET /v1/learning/feedback
+
+> **Not implemented here.** See [POST /v1/learning/feedback](#post-v1learningfeedback) and #208.
 
 List feedback records.
 

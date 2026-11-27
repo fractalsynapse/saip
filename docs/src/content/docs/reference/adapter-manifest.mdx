@@ -76,7 +76,7 @@ Present on compiled composite adapters; records exactly which recipe produced th
     "merge": "weighted_linear",
     "components": [
       { "id": "coding", "version": 18, "weight": 0.7 },
-      { "id": "treeseed-project", "version": 5, "weight": 1.0 },
+      { "id": "northstar-project", "version": 5, "weight": 1.0 },
       { "id": "research", "version": 12, "weight": 0.45 }
     ]
   },
@@ -96,14 +96,14 @@ Present on compiled composite adapters; records exactly which recipe produced th
 
 ## AdapterIndex
 
-Stored at `adapters/_index.json` in R2. Provides a global registry of all adapters and their aliases.
+Stored at `adapters/_index.json` in R2: one entry per adapter **name**, holding its version list and the `latest` pointer that `@latest` resolves through (#198b).
 
 Defined in [`shared/src/types.ts`](https://github.com/adrianwebb/saip/blob/main/shared/src/types.ts).
 
 | Field        | Type                               | Description                                                              |
 |--------------|------------------------------------|--------------------------------------------------------------------------|
 | `adapters`   | `Record<string, AdapterManifest>` | Map of canonical adapter ID → full manifest.                             |
-| `aliases`    | `Record<string, string>`          | Map of alias → canonical ID. Used for mutable references like `@latest`. |
+| `adapters[name].latest` | `number` | Highest promoted version for that name. `@latest` resolves here; a rollback re-points it. |
 | `updated_at` | `string` (ISO 8601)               | Last modification timestamp of the index itself.                         |
 
 ### Example
@@ -111,36 +111,41 @@ Defined in [`shared/src/types.ts`](https://github.com/adrianwebb/saip/blob/main/
 ```json
 {
   "adapters": {
-    "general@000042": {
-      "id": "general@000042",
-      "base_model": "Qwen/Qwen3.5-4B",
-      "rank": 16,
-      "alpha": 32,
-      "version": 42,
-      "parent": "general@000041",
-      "training_run": "train-20250115-001",
-      "training_method": "corrective_sft",
-      "metrics": { "eval_loss": 0.389 },
-      "created_at": "2025-01-15T13:30:00Z",
-      "updated_at": "2025-01-15T13:30:00Z"
+    "general": {
+      "latest": 42,
+      "versions": {
+        "42": {
+          "job_id": "train-20260115-lx3k9q-4f2a",
+          "base_model": "Qwen/Qwen3.5-4B",
+          "trained_at": "2026-01-15T13:30:00Z",
+          "records": 412
+        }
+      }
     }
   },
-  "aliases": {
-    "general@latest": "general@000042"
-  },
-  "updated_at": "2025-01-15T13:30:00Z"
+  "updated_at": "2026-01-15T13:30:01Z"
 }
+
+The full [`AdapterManifest`](#adaptermanifest) for a version lives at
+`adapters/<name>/v<N>/manifest.json`; the index holds only what serving needs to resolve a name.
 ```
 
-### Alias Resolution
+### Resolving `@latest`
 
-Aliases provide mutable pointers to immutable adapter versions. The conventional alias format is `<name>@latest`, which always points to the highest-versioned adapter in that lineage. Resolution order:
+`<name>@latest` is not a stored pointer; it is read as `adapters[name].latest` at request time.
 
-1. Look up the key in `aliases`.
-2. If found, use the returned canonical ID to look up in `adapters`.
-3. If not found, treat the key as a direct canonical ID.
+1. Parse the reference into a name and a version specifier.
+2. An explicit version (`general@000042`) is used as written.
+3. `@latest` reads `adapters[name].latest` from the index. No entry for the name is **not** an error
+   at this layer: it means nothing has been promoted for that lineage yet, and the caller receives
+   `no promoted version for "general"` from the serve resolver rather than a guessed zero.
 
-User configurations in `saip.yaml` reference adapters via aliases (e.g. `general@latest`) so that promoted adapters are picked up automatically without config changes.
+Before #198b this was a stored alias (`"general@latest": "general@000042"`) pointing into a map keyed
+by canonical ID. Two objects then held one fact, and a crash between writing them left `@latest`
+naming bytes that were never uploaded — the exact failure the single-index commit point removes.
+
+User configurations in `saip.yaml` reference adapters through `@latest` (e.g. `default-agent@latest`)
+so a promoted adapter is picked up without a config change.
 
 ## Version Numbering
 
@@ -149,5 +154,6 @@ Versions are monotonically increasing integers within an adapter lineage (identi
 1. Read the current highest version for the lineage from `_index.json`.
 2. Increment by 1.
 3. Write the new manifest with the incremented version.
-4. Update `_index.json` atomically.
-5. Update any `@latest` alias to point to the new canonical ID.
+4. Verify each uploaded object by reading it back.
+5. Move `latest` in `_index.json` — the last write, because it is the commit.
+

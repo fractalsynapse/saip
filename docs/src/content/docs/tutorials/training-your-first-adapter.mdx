@@ -114,13 +114,21 @@ curl http://localhost:8001/v1/learning/jobs \
 
 Each training strategy is a Cordis plugin that registers itself as a provider. When a learning job is triggered, the strategy plugin converts processed documents and feedback into its specific Axolotl dataset format.
 
-3. The response returns a `job_id` and initial status:
+3. The response **is the persisted job record** (#197a) — the same object you can read back at any
+   time, written to `jobs/<id>.json` before the queue event fires:
 
 ```json
 {
-  "job_id": "train_def456",
+  "id": "train-20261125-lx3k9q-4f2a",
+  "adapter": "coding",
   "strategy": "corrective_sft",
-  "status": "queued"
+  "data_scopes": ["sessions", "feedback"],
+  "params": {},
+  "inherited": { "strategy": true, "data_scopes": true },
+  "status": "queued",
+  "history": [{ "at": "2026-11-25T12:00:00Z", "status": "queued" }],
+  "created_at": "2026-11-25T12:00:00Z",
+  "updated_at": "2026-11-25T12:00:00Z"
 }
 ```
 
@@ -133,26 +141,37 @@ Start with `knowledge_embedding` for your first adapter to establish domain grou
 1. Check learning job status at any time:
 
 ```bash
-curl http://localhost:8001/v1/learning/jobs/train_def456
+curl -H "Authorization: Bearer $SAIP_TOKEN" \
+  http://localhost:8001/v1/learning/jobs/train-20261125-lx3k9q-4f2a
 ```
 
-2. The response includes:
+2. The record gains the artifacts each stage produced:
 
 ```json
 {
-  "job_id": "train_def456",
-  "strategy": "corrective_sft",
-  "status": "running",
-  "progress": {
-    "epoch": 2,
-    "total_epochs": 3,
-    "loss": 0.342,
-    "eta_seconds": 180
-  }
+  "id": "train-20261125-lx3k9q-4f2a",
+  "status": "succeeded",
+  "dataset": { "key": "jobs/train-20261125-lx3k9q-4f2a/dataset/corrective_sft.jsonl", "sha256": "…", "records": 412, "format": "axolotl-sft" },
+  "config": { "key": "jobs/train-20261125-lx3k9q-4f2a/axolotl.yaml", "sha256": "…" },
+  "artifact": { "prefix": "adapter-output/train-20261125-lx3k9q-4f2a/", "base_model": "Qwen/Qwen3.5-4B" },
+  "history": [
+    { "at": "2026-11-25T12:00:00Z", "status": "queued" },
+    { "at": "2026-11-25T12:00:04Z", "status": "running" },
+    { "at": "2026-11-25T12:41:19Z", "status": "succeeded" }
+  ]
 }
 ```
 
-Status transitions through `queued` → `running` → `completed` (or `failed`). When complete, the adapter artifacts are automatically finalized.
+Status transitions through `queued` → `running` → `succeeded` (or `failed`) — there is no
+`completed` state, and no `progress` field: the runner reports the exit code and the `history`
+trail, and a percentage nobody computes would be worse than nothing. A job still marked `running`
+when the gateway restarts becomes `failed { code: "interrupted" }`; re-running it is a new job.
+
+:::note[Not shipped yet]
+`dataset`, `config`, `artifact` and `version` are populated by the runner (#197b) and promotion
+(#198b). Only `status`, `history` and the linkage fields are filled today, so a job you create now
+stays `queued`: nothing executes it until the Axolotl runner lands.
+:::
 
 ## Adapter Promotion
 

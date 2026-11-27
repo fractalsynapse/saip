@@ -20,6 +20,7 @@ additionalProperties: false
 
 properties:
   platform:
+    description: "Install identity: a name and a version, recorded alongside anything this install produces."
     type: object
     required: [name, version]
     properties:
@@ -31,12 +32,13 @@ properties:
         pattern: "^\\d+\\.\\d+\\.\\d+"
 
   model:
+    description: "The base checkpoint the engine serves, pinned by revision. The base must already be quantized for the declared quantization, since vLLM cannot AWQ-quantize a BF16 checkpoint at load time. Hardware-dependent knobs belong to the active service profile, not here."
     type: object
     required: [base]
     properties:
       base:
         type: string
-        description: HuggingFace model ID (reference: QuantTrio/Qwen3.5-4B-AWQ)
+        description: HuggingFace model ID (reference example `QuantTrio/Qwen3.5-4B-AWQ`)
       revision:
         type: string
         description: Commit hash pinning the checkpoint (recorded in the adapter manifest)
@@ -150,6 +152,7 @@ properties:
               enum: [adamw_bnb_8bit, adamw_torch_4bit, adamw_torch]
 
   adapter:
+    description: "LoRA defaults for newly trained adapters: rank, alpha, and the modules a training run targets."
     type: object
     properties:
       default_rank:
@@ -171,6 +174,7 @@ properties:
           as LoRA-addressable; targeting them is opt-in, not the default.
 
   storage:
+    description: "Object storage selection. The r2 bucket and S3-compatible endpoint arrive by ${VAR} interpolation; credentials are referenced by NAME and resolved through the secrets layer, never stored in this file. See the configuration reference's storage section."
     type: object
     required: [r2]
     properties:
@@ -192,7 +196,39 @@ properties:
             description: Environment variable name containing HF token
             default: SAIP_HF_TOKEN
 
+  libraries:
+    description: "Saved selectors over the knowledge corpus, addressable from an adapter's data_scopes as `library:<name>`. Additive: omitting the section changes nothing, and existing saip.yaml files keep loading."
+    type: array
+    items:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Library identifier, used as `library:<name>` in an adapter's data_scopes
+        description:
+          type: string
+        filter:
+          type: object
+          additionalProperties: false
+          properties:
+            tags:
+              type: array
+              items:
+                type: string
+              description: Match documents carrying all listed tags
+            source_type:
+              type: string
+              enum: [document, repository, dataset]
+            ids:
+              type: array
+              items:
+                type: string
+              description: Explicit member document ids, ANDed with the other clauses
+
   users:
+    description: "Caller to adapter assignment: which adapter group serves a caller, and which adapter a job of theirs targets."
     type: array
     items:
       type: object
@@ -215,6 +251,7 @@ properties:
   # a trainable leaf (with strategy + data-scope linkage) or a composite built
   # from weighted components that version on independent cadences.
   adapters:
+    description: "First-class adapter definitions, independent of users. Each entry defines exactly one of leaf training linkage (strategy + data scopes) or a composite merge plan over weighted components."
     type: array
     items:
       type: object
@@ -295,6 +332,7 @@ properties:
                     description: Optional version pin (e.g. '@000012'); default @latest resolved at compile time
 
   inference:
+    description: "Inference gateway service settings: port, GPU node placement, LoRA slot capacity, and the system-one endpoint toggle."
     type: object
     properties:
       port:
@@ -319,6 +357,7 @@ properties:
             default: true
 
   training:
+    description: "Training gateway settings: port, GPU node placement, and per-method options such as the KTO reward range."
     type: object
     properties:
       port:
@@ -367,6 +406,7 @@ properties:
                   type: number
 
   plugins:
+    description: "Cordis plugin enablement and per-plugin configuration."
     type: array
     items:
       type: object

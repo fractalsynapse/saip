@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../src/index.js'
+import { MemoryStorage } from '../src/lib/backends.js'
 
 const repoConfig = fileURLToPath(new URL('../../saip.yaml', import.meta.url))
 
 async function boot() {
-  const ctx = (await createApp({ configPath: repoConfig })) as any
+  const ctx = (await createApp({ configPath: repoConfig, storage: new MemoryStorage() })) as any
   return ctx.apiCore.app
 }
 

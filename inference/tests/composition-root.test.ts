@@ -74,7 +74,7 @@ describe('createApp() composition root: env-selected engine backend', () => {
       // seam actually under test here — the engine backend, deliberately NOT injected — stays
       // production-wired. That distinction is the whole point of this file.
       const storage = new MemoryStorage()
-      await storage.put('adapters/_index.json', JSON.stringify({ aliases: { 'general@latest': 'general@42' } }))
+      await storage.put('adapters/_index.json', JSON.stringify({ adapters: { general: { latest: 42, versions: { '42': { job_id: 'j-1', base_model: 'b', trained_at: '2026-01-01T00:00:00Z' } } } } }))
       const ctx = (await createApp({ configPath: devModeConfig(), storage })) as any
 
       const res = await ctx.apiChat.app.request('/v1/chat/completions', {
@@ -101,7 +101,10 @@ describe('createApp() composition root: env-selected engine backend', () => {
     const saved = process.env.SAIP_VLLM_BASE_URL
     delete process.env.SAIP_VLLM_BASE_URL
     try {
-      const ctx = (await createApp({ configPath: devModeConfig() })) as any
+      // Storage is opted into by name — the composition root reads it as data, exactly as it
+      // reads configPath. What stays un-injected is the collaborator this file is about: the
+      // engine backend, resolved from SAIP_VLLM_BASE_URL by production code.
+      const ctx = (await createApp({ configPath: devModeConfig(), env: { SAIP_STORAGE: 'memory' } })) as any
       const res = await ctx.apiChat.app.request('/v1/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
@@ -119,7 +122,7 @@ describe('createApp() composition root: env-selected engine backend', () => {
     process.env.SAIP_VLLM_BASE_URL = 'http://127.0.0.1:1/v1'
     try {
       const storage = new MemoryStorage()
-      await storage.put('adapters/_index.json', JSON.stringify({ aliases: { 'general@latest': 'general@42' } }))
+      await storage.put('adapters/_index.json', JSON.stringify({ adapters: { general: { latest: 42, versions: { '42': { job_id: 'j-1', base_model: 'b', trained_at: '2026-01-01T00:00:00Z' } } } } }))
       const ctx = (await createApp({ configPath: devModeConfig(), storage })) as any
       const res = await ctx.apiChat.app.request('/v1/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -148,24 +151,21 @@ describe('secret resolution reaches the encrypted store (#93)', () => {
     const store = new SecretStore({ path, keySources: defaultKeySources(env, { storePath: path }) })
     await store.set('SAIP_R2_BUCKET', 'from-the-encrypted-store')
 
-    const saved = { ...process.env }
-    process.env.SAIP_SECRETS_FILE = path
-    process.env.SAIP_SECRETS_PASSPHRASE = pass
-    delete process.env.SAIP_R2_BUCKET
-    try {
-      const ctx = (await createApp({ configPath: devModeConfig() })) as any
-      // The gateway's own secrets service — the wired default, not an injected provider.
-      const value = await ctx.secrets.get('SAIP_R2_BUCKET')
-      expect(value).toBe('from-the-encrypted-store')
-    } finally {
-      for (const k of ['SAIP_SECRETS_FILE', 'SAIP_SECRETS_PASSPHRASE']) {
-        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]!
-      }
-    }
+    // The store location arrives through the app's own environment instead of `process.env`.
+    // Mutating the process made this file order-dependent, and it is the same #138 class the
+    // env-isolation setup exists to end: a gateway that reads a different environment than the
+    // one it was handed is not testable, only accidentally passing.
+    const ctx = (await createApp({
+      configPath: devModeConfig(),
+      env: { ...env, SAIP_STORAGE: 'memory', SAIP_R2_BUCKET: '' },
+    })) as any
+    // The gateway's own secrets service — the wired default, not an injected provider.
+    const value = await ctx.secrets.get('SAIP_R2_BUCKET')
+    expect(value).toBe('from-the-encrypted-store')
   })
 
   it('exposes the secret-access gateway as a Cordis service', async () => {
-    const ctx = (await createApp({ configPath: devModeConfig() })) as any
+    const ctx = (await createApp({ configPath: devModeConfig(), env: { SAIP_STORAGE: 'memory' } })) as any
     const gw = ctx.secretAccess
     expect(gw).toBeTruthy()
     expect(typeof gw.explain).toBe('function')

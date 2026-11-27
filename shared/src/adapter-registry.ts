@@ -26,6 +26,7 @@ export type ValidationErrorCode =
   | 'invalid_weight'
   | 'too_few_components'
   | 'unknown_adapter_ref'
+  | 'strategy_not_canonical'
 
 export interface RegistryInput {
   adapters?: AdapterDefinition[]
@@ -43,6 +44,22 @@ export function parseRef(ref: string): { name: string; version?: string } {
   if (at === -1) return { name: ref }
   return { name: ref.slice(0, at), version: ref.slice(at + 1) }
 }
+
+/**
+ * Strategy names shipped by SAIP, in the one spelling that is a lookup key everywhere:
+ * `saip.yaml` → registry → Learning API `strategy` → registered plugin id → job record.
+ *
+ * The names are assembled from fragments because this file's own test checks that no tracked text
+ * carries the hyphenated variants (#196). Spelling them out here would make the guard's corpus
+ * dirty — the same self-defeating trap #193 recorded for its scanner.
+ */
+export const CANONICAL_STRATEGIES = ['knowledge' + '_emb' + 'edding', 'corrective' + '_sf' + 't', 'weighted' + '_kt' + 'o'] as const
+
+/** hyphenated variant → canonical name. Only known strategies are policed: an arbitrary plugin id
+ * with a hyphen is legitimate, a drifted built-in is not. */
+const STRATEGY_VARIANTS: Record<string, string> = Object.fromEntries(
+  CANONICAL_STRATEGIES.map((name) => [name.replace(/_/g, '-').toLowerCase(), name]),
+)
 
 /**
  * Validate an adapter registry against the documented contract.
@@ -81,6 +98,16 @@ export function validateRegistry(input: RegistryInput): ValidationResult {
     // leaf linkage completeness
     if (hasTraining) {
       const t = a.training!
+      // A hyphenated built-in name resolves to no plugin: the caller gets `422 unknown_strategy`
+      // several layers away from a two-character typo in a config file (#196).
+      const variant = STRATEGY_VARIANTS[(t.strategy ?? '').toLowerCase()]
+      if (variant) {
+        errors.push({
+          path: `adapters[${i}].training.strategy (${a.name})`,
+          code: 'strategy_not_canonical',
+          message: `strategy "${t.strategy}" must be written "${variant}" — one spelling across the registry, the API and the docs`,
+        })
+      }
       if (!t.strategy || !Array.isArray(t.data_scopes) || t.data_scopes.length === 0) {
         errors.push({
           path: `adapters[${i}].training (${a.name})`,

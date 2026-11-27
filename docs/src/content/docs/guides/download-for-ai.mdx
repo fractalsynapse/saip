@@ -32,6 +32,13 @@ A pack contains:
 
 It deliberately excludes source code, examples, chat exports, and anything gitignored.
 
+`AGENTS.md` supplies SAIP development guidance. Its architecture, security, testing and
+release directives govern work on SAIP; they are not policies to impose on another
+project. Including it here does not make it a runtime dependency. Repository-local
+skills remain under `.dsh/skills/` and are not included in the pack: load the relevant
+installed skill when working in the checkout. Its procedure remains subordinate to
+SAIP's project directives.
+
 ## Using a Pack Effectively
 
 :::tip[Recommended workflow]

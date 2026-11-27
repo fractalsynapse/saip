@@ -79,10 +79,126 @@ export interface AdapterManifest {
   updated_at: string
 }
 
-/** Global adapter index stored in R2 at adapters/_index.json */
+/** One promoted version's entry in the index. Enough to answer "what produced this" without reading the version manifest. */
+export interface AdapterVersionEntry {
+  job_id: string
+  base_model: string
+  trained_at: string
+  records?: number
+}
+
+/** One adapter lineage: its versions and the pointer `@latest` resolves through. */
+export interface AdapterLineage {
+  latest: number
+  versions: Record<string, AdapterVersionEntry>
+}
+
+/**
+ * Global adapter index stored at `adapters/_index.json`.
+ *
+ * This replaced the earlier `{ adapters: Record<canonicalId, AdapterManifest>, aliases: {...} }`
+ * shape in #198b. That design kept two objects in charge of one fact — a promotion wrote the version
+ * record and then moved an alias — so a crash in between left `@latest` naming bytes that were never
+ * uploaded. Holding `latest` inside the lineage makes the index write the single commit point, which
+ * is what the promotion ordering in `training/src/plugins/r2-sync.ts` depends on. No `aliases` map
+ * exists anymore: `@latest` is derived, so it cannot go stale.
+ */
 export interface AdapterIndex {
-  adapters: Record<string, AdapterManifest>
-  aliases: Record<string, string>  // e.g., "general@latest" → "general@000042"
+  adapters: Record<string, AdapterLineage>
+  updated_at: string
+}
+
+export type LearningJobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+/** One append-only status change. `detail` carries the runner's short reason, never a log blob. */
+export interface JobHistoryEntry {
+  at: string
+  status: string
+  detail?: string
+}
+
+/**
+ * Persisted learning-job record, stored at `jobs/<id>.json` (design record §2.2).
+ *
+ * Every field has a named consumer: `dataset.sha256` is the determinism proof #196 is judged by,
+ * `artifact` is what `r2Sync` uploads, `version` is assigned only at promotion so a succeeded job
+ * that was never promoted says so by leaving it absent, and `history` is the audit trail a
+ * training run needs when the process that ran it is gone.
+ *
+ * There is deliberately no `progress` field: nothing produces a meaningful fraction, and a number
+ * that is always 0 or always guessed is worse than no number.
+ */
+export interface LearningJobRecord {
+  id: string
+  /** Authenticated principal, from the existing x-saip-caller/principal path. */
+  caller?: string
+  adapter: string
+  strategy: string
+  data_scopes: string[]
+  data_ids?: string[]
+  params: Record<string, unknown>
+  inherited: { strategy: boolean; data_scopes: boolean }
+  status: LearningJobStatus
+  error?: { code: string; message: string }
+  dataset?: { key: string; sha256: string; records: number; format: string }
+  config?: { key: string; sha256: string }
+  artifact?: { prefix: string; base_model: string }
+  /** Assigned at promotion ONLY; links back via the adapters index. */
+  version?: number
+  history: JobHistoryEntry[]
+  created_at: string
+  updated_at: string
+}
+
+/** What `jobs/_index.json` holds per job — enough to filter a list without reading every record. */
+export interface LearningJobSummary {
+  status: LearningJobStatus
+  adapter: string
+  strategy: string
+  created_at: string
+  updated_at: string
+}
+
+/** Index of job summaries. Single-writer: only the training gateway mutates `jobs/`. */
+export interface LearningJobIndex {
+  jobs: Record<string, LearningJobSummary>
+  updated_at: string
+}
+
+/** Selector clause naming a subset of the knowledge corpus (saip.yaml `libraries:`). */
+export interface LibraryFilter {
+  tags?: string[]
+  source_type?: 'document' | 'repository' | 'dataset'
+  ids?: string[]
+}
+
+/** A named library as declared in config. Membership is derived, never authored. */
+export interface LibraryDefinition {
+  name: string
+  description?: string
+  filter?: LibraryFilter
+}
+
+/**
+ * Materialized library at `libraries/<name>/manifest.json` (#196, epic #64 B3).
+ *
+ * A manifest records the filter that produced the membership alongside the member keys, so a
+ * reader can see *why* a library contains what it does, and so pruning after a config edit is a
+ * delete rather than a guess. It is a view over `knowledge/` — no document bytes are copied here,
+ * which is what keeps a filter change from duplicating the corpus.
+ */
+export interface LibraryManifest {
+  name: string
+  filter: LibraryFilter
+  /** Knowledge document keys, sorted. */
+  members: string[]
+  count: number
+  updated_at: string
+}
+
+/** Registry of materialized libraries, so a stale manifest can be detected and pruned. */
+export interface LibraryIndex {
+  libraries: Record<string, { count: number; updated_at: string }>
   updated_at: string
 }
 

@@ -18,16 +18,40 @@ describe('createApp wiring', () => {
     expect(await storage.get('x')).toBe('y')
   })
 
-  it('defaults to loadConfig() + a fresh MemoryStorage when nothing injected', async () => {
+  it('reads config through loadConfig() when nothing is injected, and refuses storage silently (#198)', async () => {
     const prev = process.env.SAIP_CONFIG
     process.env.SAIP_CONFIG = repoConfig
+    try {
+      // The committed `saip.yaml` interpolates `${SAIP_R2_BUCKET:-}`, so this checkout has an
+      // empty bucket and env-isolation guarantees no shell value leaks in. That is precisely the
+      // configuration that used to boot a gateway onto a Map. It must now refuse, naming the
+      // variable, instead of reporting success for writes that die at restart.
+      await expect(createApp()).rejects.toThrow(/SAIP_R2_BUCKET/)
+    } finally {
+      if (prev === undefined) delete process.env.SAIP_CONFIG
+      else process.env.SAIP_CONFIG = prev
+    }
+  })
+
+  it('boots with config read from disk once memory is opted into by name (#198)', async () => {
+    const saved = { ...process.env }
+    process.env.SAIP_CONFIG = repoConfig
+    process.env.SAIP_STORAGE = 'memory'
+    const lines: string[] = []
+    const realWrite = process.stderr.write.bind(process.stderr)
+    ;(process as any).stderr.write = (c: any) => { lines.push(String(c)); return true }
     try {
       const ctx = (await createApp()) as any
       expect(ctx.gatewayState.config.model.base).toBe('QuantTrio/Qwen3.5-4B-AWQ')
       expect(typeof ctx.gatewayState.storage.list).toBe('function')
+      // Opt-in is only honest if it is loud: the line must actually have been printed.
+      expect(lines.join('')).toContain('EXPLICIT MEMORY')
+      expect(lines.join('')).toContain('dies at restart')
     } finally {
-      if (prev === undefined) delete process.env.SAIP_CONFIG
-      else process.env.SAIP_CONFIG = prev
+      ;(process as any).stderr.write = realWrite
+      for (const k of ['SAIP_CONFIG', 'SAIP_STORAGE']) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]!
+      }
     }
   })
 
@@ -41,6 +65,6 @@ describe('createApp wiring', () => {
       ],
       inference: { port: 8000, maxLoras: 4, systemone: { enabled: false } },
     }
-    await expect(createApp({ config: bad })).rejects.toThrow(/adapter registry/i)
+    await expect(createApp({ config: bad, storage: new MemoryStorage() })).rejects.toThrow(/adapter registry/i)
   })
 })

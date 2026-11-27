@@ -9,7 +9,7 @@
 
 import { existsSync } from 'node:fs'
 import { loadYamlConfig } from '@saip/shared'
-import type { AdapterDefinition, UserEntry, ApiTokenConfig } from '@saip/shared'
+import type { AdapterDefinition, LibraryDefinition, UserEntry, ApiTokenConfig, StorageConfig } from '@saip/shared'
 import type { ProfileMap } from '@saip/shared'
 
 export interface Message {
@@ -51,6 +51,8 @@ export interface SaipRuntimeConfig {
   profiles: ProfileMap
   users: UserEntry[]
   adapters: AdapterDefinition[]
+  /** Declared knowledge selectors, materialized by the Data API (#196). */
+  libraries?: LibraryDefinition[]
   inference: {
     port: number
     maxLoras: number
@@ -61,7 +63,8 @@ export interface SaipRuntimeConfig {
       weighted_kto?: { reward_range?: [number, number] }
     }
   }
-  storage?: Record<string, unknown>
+  /** Read by `storageProviderFor()`; `bucket`/`endpoint` arrive interpolated. */
+  storage?: StorageConfig
   security: SecurityConfig
 }
 
@@ -127,6 +130,12 @@ export function loadConfig(path = process.env.SAIP_CONFIG ?? 'saip.yaml'): SaipR
     profiles: raw.profiles && typeof raw.profiles === 'object' ? (raw.profiles as ProfileMap) : {},
     users: Array.isArray(raw.users) ? raw.users : [],
     adapters: Array.isArray(raw.adapters) ? raw.adapters : [],
+    // Malformed entries are dropped rather than thrown on: the section is additive, and a typo in a
+    // library name must not make an otherwise working gateway unbootable. Training fails the *job*
+    // that asks for the missing library, which is where the error belongs.
+    libraries: Array.isArray(raw.libraries)
+      ? (raw.libraries as LibraryDefinition[]).filter((l) => typeof l?.name === 'string' && l.name.length > 0)
+      : [],
     inference: {
       port: Number(inf.port ?? 8000),
       maxLoras: Number(inf.max_loras ?? 4),
